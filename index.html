@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -272,6 +273,23 @@ async function dbUpdateModule(id, fields){
   if(error){ showToast("Update failed", true); return false; }
   return true;
 }
+async function dbSetModuleVideoUrl(moduleId, url){
+  const {error} = await sb.from("modules").update({video_url: url || null}).eq("id", moduleId);
+  if(error){ showToast("Failed to save link", true); return false; }
+  return true;
+}
+async function dbBulkSetVideoUrls(employeeId, urlsByIndex){
+  const updates = Object.entries(urlsByIndex).map(([idx, url]) =>
+    sb.from("modules").update({video_url: url || null}).eq("employee_id", employeeId).eq("module_index", parseInt(idx))
+  );
+  await Promise.all(updates);
+}
+async function dbBulkSetVideoUrlsAllEmployees(urlsByIndex){
+  const emps = await dbGetAllEmployees();
+  for(const emp of emps){
+    await dbBulkSetVideoUrls(emp.id, urlsByIndex);
+  }
+}
 async function dbResetEmployeeProgress(employeeId, startDate){
   const modules = CURRICULUM.map((title,i)=>({
     module_index: i+1, due_date: addMonths(startDate, Math.floor(i/2)),
@@ -451,7 +469,10 @@ async function renderEmployeeView(){
         <div class="meta">Due ${fmtDate(m.due_date)}${m.completed_date ? ' &middot; Completed '+fmtDate(m.completed_date):''}${m.status==='pending_review' ? ' &middot; Pending supervisor review':''}</div>
       </div>
       <div>${moduleStatusBadge(m)}</div>
-      ${m.status==="upcoming" ? `<button class="btn btn-secondary btn-sm" data-id="${m.id}">Mark watched</button>` : ""}
+      <div style="display:flex; gap:8px;">
+        ${m.video_url ? `<a href="${m.video_url}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm" style="text-decoration:none;">Watch video</a>` : `<span style="font-size:11px; color:var(--muted); white-space:nowrap;">Link coming soon</span>`}
+        ${m.status==="upcoming" ? `<button class="btn btn-primary btn-sm" data-id="${m.id}">Mark watched</button>` : ""}
+      </div>
     `;
     list.appendChild(row);
   });
@@ -502,6 +523,7 @@ async function renderSupervisorView(){
       <div class="tabs">
         <button class="tab ${activeTab==='overview'?'active':''}" data-tab="overview">Employees</button>
         <button class="tab ${activeTab==='review'?'active':''}" data-tab="review">Pending review</button>
+        <button class="tab ${activeTab==='content'?'active':''}" data-tab="content">Course content</button>
         <button class="tab ${activeTab==='settings'?'active':''}" data-tab="settings">Settings</button>
       </div>
       <div id="tabContent"></div>
@@ -518,6 +540,7 @@ async function renderSupervisorView(){
 
   if(activeTab==="overview") renderOverviewTab(content);
   else if(activeTab==="review") renderReviewTab(content);
+  else if(activeTab==="content") renderContentTab(content);
   else renderSettingsTab(content);
 }
 
@@ -585,6 +608,96 @@ function renderReviewTab(content){
   });
 }
 
+function renderContentTab(content){
+  // Use the first employee's modules as the canonical list of 40 titles/links
+  // (links are stored per-employee row, but bulk-assign keeps them all in sync)
+  const sample = EMPLOYEES_CACHE[0];
+  if(!sample){
+    content.innerHTML = `<div class="card"><div class="empty"><div class="big">&#9888;</div>Add at least one employee first, then come back here to attach video links &mdash; links are applied to every employee's curriculum at once.</div></div>`;
+    return;
+  }
+  const linkedCount = sample.modules.filter(m=>m.video_url).length;
+  content.innerHTML = `
+    <div class="card">
+      <div class="card-head-row"><h3>Bulk-add video links</h3><span style="font-size:12px; color:var(--muted);">${linkedCount}/40 linked</span></div>
+      <p style="font-size:13px; color:var(--muted); margin-bottom:12px;">Paste one link per line, in module order (1 to 40). This applies the same links across every employee's curriculum. Leave a line blank to skip a module.</p>
+      <textarea id="bulkLinks" style="min-height:160px; font-family:monospace; font-size:12px;" placeholder="https://...module-1-link
+https://...module-2-link
+https://...module-3-link
+..."></textarea>
+      <div class="modal-actions" style="justify-content:flex-end;">
+        <button class="btn btn-primary" id="saveBulkBtn" style="width:auto;">Save all links</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Edit individual module links</h3>
+      <div id="moduleLinkList"></div>
+    </div>
+  `;
+
+  document.getElementById("saveBulkBtn").onclick = async ()=>{
+    const lines = document.getElementById("bulkLinks").value.split("\n");
+    const urlsByIndex = {};
+    lines.forEach((line, i)=>{
+      if(i < 40){
+        const trimmed = line.trim();
+        if(trimmed) urlsByIndex[i+1] = trimmed;
+      }
+    });
+    if(Object.keys(urlsByIndex).length===0){ showToast("Paste at least one link first", true); return; }
+    const btn = document.getElementById("saveBulkBtn");
+    btn.disabled = true; btn.textContent = "Saving...";
+    await dbBulkSetVideoUrlsAllEmployees(urlsByIndex);
+    showToast(`Saved ${Object.keys(urlsByIndex).length} link(s) across all employees`);
+    renderSupervisorView();
+  };
+
+  const list = document.getElementById("moduleLinkList");
+  sample.modules.forEach(m=>{
+    const row = document.createElement("div");
+    row.className = "module-row";
+    row.innerHTML = `
+      <div class="module-num ${m.video_url ? 'done':''}">${m.module_index}</div>
+      <div class="module-info">
+        <div class="title">${m.title}</div>
+        <div class="meta" style="word-break:break-all;">${m.video_url ? m.video_url : 'No link set'}</div>
+      </div>
+      <button class="icon-btn" data-idx="${m.module_index}" data-title="${m.title.replace(/"/g,'&quot;')}">Edit</button>
+    `;
+    list.appendChild(row);
+  });
+  list.querySelectorAll("button[data-idx]").forEach(btn=>{
+    btn.onclick = ()=> openSingleLinkEditor(parseInt(btn.dataset.idx), btn.dataset.title);
+  });
+}
+
+function openSingleLinkEditor(moduleIndex, title){
+  const sample = EMPLOYEES_CACHE[0];
+  const current = sample.modules.find(m=>m.module_index===moduleIndex);
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Module ${moduleIndex}: ${title}</h3>
+      <div class="sub">This link will be applied to this module across all employees.</div>
+      <div class="field"><label>Video URL</label><input type="text" id="singleLinkInput" value="${current.video_url || ''}" placeholder="https://..." /></div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" id="cancelBtn">Cancel</button>
+        <button class="btn btn-primary" id="saveBtn" style="width:auto;">Save link</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById("cancelBtn").onclick = ()=> overlay.remove();
+  document.getElementById("saveBtn").onclick = async ()=>{
+    const url = document.getElementById("singleLinkInput").value.trim();
+    await dbBulkSetVideoUrlsAllEmployees({[moduleIndex]: url});
+    showToast("Link saved");
+    overlay.remove();
+    renderSupervisorView();
+  };
+}
+
 function renderSettingsTab(content){
   content.innerHTML = `
     <div class="card" style="max-width:420px;">
@@ -612,9 +725,9 @@ function openEmployeeDetail(empId){
       <h3>${emp.name}</h3>
       <div class="sub">${emp.role} &middot; STEM OPT start ${fmtDate(emp.start_date)} &middot; ${stats.completed}/${stats.total} completed (${stats.pct}%)</div>
       <table class="log-table">
-        <thead><tr><th>#</th><th>Module</th><th>Due</th><th>Status</th><th>Signed off</th></tr></thead>
+        <thead><tr><th>#</th><th>Module</th><th>Due</th><th>Status</th><th>Signed off</th><th>Video</th></tr></thead>
         <tbody>
-          ${emp.modules.map(m=>`<tr><td>${m.module_index}</td><td>${m.title}</td><td>${fmtDate(m.due_date)}</td><td>${moduleStatusBadge(m)}</td><td>${m.signoff_date ? fmtDate(m.signoff_date) : "-"}</td></tr>`).join("")}
+          ${emp.modules.map(m=>`<tr><td>${m.module_index}</td><td>${m.title}</td><td>${fmtDate(m.due_date)}</td><td>${moduleStatusBadge(m)}</td><td>${m.signoff_date ? fmtDate(m.signoff_date) : "-"}</td><td>${m.video_url ? `<a href="${m.video_url}" target="_blank" rel="noopener noreferrer">Link</a>` : '-'}</td></tr>`).join("")}
         </tbody>
       </table>
       <div class="modal-actions">
