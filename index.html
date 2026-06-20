@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ShanuDT IT Solutions - STEM OPT Training Portal</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --navy:#1F3864; --navy-light:#2E4D7A; --accent:#2E75B6; --accent-light:#E8F1FA;
+    --bg:#F4F6F9; --card:#FFFFFF; --border:#DCE3EB; --text:#1A2433; --muted:#5B6B7F;
+    --green:#1D9E75; --green-bg:#E1F5EE; --amber:#BA7517; --amber-bg:#FAEEDA;
+    --red:#A32D2D; --red-bg:#FCEBEB; --radius:10px; --radius-lg:14px;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif; background:var(--bg); color:var(--text); line-height:1.5;}
+  #app{min-height:100vh;}
+  a{color:inherit;}
+  button{font-family:inherit; cursor:pointer;}
+  input,select,textarea{font-family:inherit;}
+
+  .login-wrap{min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px;}
+  .login-card{background:var(--card); border:1px solid var(--border); border-radius:var(--radius-lg); padding:40px; width:100%; max-width:400px; box-shadow:0 2px 16px rgba(20,30,50,0.06);}
+  .login-logo{width:48px; height:48px; border-radius:10px; background:var(--navy); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:18px; margin-bottom:16px;}
+  .login-card h1{font-size:20px; font-weight:700; color:var(--navy); margin-bottom:4px;}
+  .login-card .sub{color:var(--muted); font-size:13px; margin-bottom:24px;}
+  .field{margin-bottom:14px;}
+  .field label{display:block; font-size:12px; font-weight:600; color:var(--muted); margin-bottom:6px; text-transform:uppercase; letter-spacing:.03em;}
+  .field select, .field input{width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:8px; font-size:14px; background:#fff;}
+  .field select:focus, .field input:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-light);}
+  .btn{display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:10px 18px; border-radius:8px; border:none; font-size:14px; font-weight:600; transition:opacity .15s;}
+  .btn:hover{opacity:.9;}
+  .btn-primary{background:var(--navy); color:#fff; width:100%; padding:12px;}
+  .btn-danger{background:var(--red); color:#fff;}
+  .btn-secondary{background:#fff; border:1px solid var(--border); color:var(--text);}
+  .btn-sm{padding:6px 12px; font-size:13px; width:auto;}
+  .login-note{margin-top:18px; font-size:11px; color:var(--muted); text-align:center; line-height:1.5;}
+  .role-toggle{display:flex; gap:8px; margin-bottom:18px;}
+  .role-btn{flex:1; padding:9px; border-radius:8px; border:1px solid var(--border); background:#fff; font-size:13px; font-weight:600; color:var(--muted);}
+  .role-btn.active{background:var(--navy); color:#fff; border-color:var(--navy);}
+  .error-text{color:var(--red); font-size:12px; margin-top:-6px; margin-bottom:10px;}
+
+  .topbar{background:var(--navy); color:#fff; padding:0 24px; height:56px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:10;}
+  .topbar-left{display:flex; align-items:center; gap:10px;}
+  .topbar-logo{width:30px; height:30px; border-radius:7px; background:rgba(255,255,255,0.15); display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px;}
+  .topbar-title{font-size:14px; font-weight:600;}
+  .topbar-title span{opacity:.65; font-weight:400; margin-left:8px;}
+  .topbar-right{display:flex; align-items:center; gap:14px; font-size:13px;}
+  .topbar-right .who{opacity:.85;}
+  .logout-link{background:rgba(255,255,255,0.12); border:none; color:#fff; padding:7px 13px; border-radius:7px; font-size:13px;}
+
+  .container{max-width:1100px; margin:0 auto; padding:28px 24px 60px;}
+  .page-head{display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:22px; flex-wrap:wrap; gap:12px;}
+  .page-head h2{font-size:22px; font-weight:700; color:var(--navy);}
+  .page-head .desc{color:var(--muted); font-size:13px; margin-top:3px;}
+
+  .stats-row{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:26px;}
+  .stat-card{background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:16px 18px;}
+  .stat-card .label{font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; font-weight:600;}
+  .stat-card .value{font-size:26px; font-weight:700; color:var(--navy); margin-top:4px;}
+  .stat-card .value.green{color:var(--green);} .stat-card .value.amber{color:var(--amber);}
+
+  .progress-track{height:8px; background:var(--border); border-radius:5px; overflow:hidden;}
+  .progress-fill{height:100%; background:var(--accent); border-radius:5px; transition:width .3s;}
+
+  .card{background:var(--card); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px 22px; margin-bottom:16px;}
+  .card h3{font-size:15px; font-weight:700; margin-bottom:14px; color:var(--navy);}
+  .card-head-row{display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;}
+  .card-head-row h3{margin-bottom:0;}
+
+  .module-row{display:flex; align-items:center; gap:14px; padding:13px 0; border-bottom:1px solid var(--border);}
+  .module-row:last-child{border-bottom:none;}
+  .module-num{width:30px; height:30px; border-radius:50%; background:var(--accent-light); color:var(--accent); font-weight:700; font-size:12px; display:flex; align-items:center; justify-content:center; flex-shrink:0;}
+  .module-num.done{background:var(--green-bg); color:var(--green);}
+  .module-info{flex:1; min-width:0;}
+  .module-info .title{font-size:14px; font-weight:600;}
+  .module-info .meta{font-size:12px; color:var(--muted); margin-top:2px;}
+  .badge{display:inline-block; padding:3px 9px; border-radius:6px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; white-space:nowrap;}
+  .badge.done{background:var(--green-bg); color:var(--green);}
+  .badge.pending{background:var(--amber-bg); color:var(--amber);}
+  .badge.upcoming{background:#EEF0F3; color:var(--muted);}
+  .badge.overdue{background:var(--red-bg); color:var(--red);}
+  .badge.review{background:var(--accent-light); color:var(--accent);}
+  .badge.inactive{background:#EEF0F3; color:var(--muted);}
+
+  .emp-card{background:var(--card); border:1px solid var(--border); border-radius:var(--radius-lg); padding:18px 20px; margin-bottom:14px; display:flex; align-items:center; gap:16px; flex-wrap:wrap;}
+  .emp-card .clickzone{display:flex; align-items:center; gap:16px; flex:1; cursor:pointer; min-width:240px;}
+  .avatar{width:42px; height:42px; border-radius:50%; background:var(--navy); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:14px; flex-shrink:0;}
+  .emp-info{flex:1;}
+  .emp-info .name{font-weight:700; font-size:15px;}
+  .emp-info .role{font-size:12px; color:var(--muted);}
+  .emp-progress{width:160px;}
+  .emp-progress .pct{font-size:12px; color:var(--muted); margin-bottom:4px; display:flex; justify-content:space-between;}
+
+  .modal-overlay{position:fixed; inset:0; background:rgba(20,30,50,0.5); display:flex; align-items:center; justify-content:center; z-index:100; padding:20px; overflow-y:auto;}
+  .modal{background:#fff; border-radius:var(--radius-lg); padding:26px; width:100%; max-width:560px; max-height:88vh; overflow-y:auto;}
+  .modal h3{font-size:17px; font-weight:700; color:var(--navy); margin-bottom:4px;}
+  .modal .sub{font-size:13px; color:var(--muted); margin-bottom:18px;}
+  .modal-actions{display:flex; gap:10px; margin-top:20px; justify-content:flex-end; flex-wrap:wrap;}
+  textarea{width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:8px; font-size:13px; resize:vertical; min-height:80px;}
+  .form-grid{display:grid; grid-template-columns:1fr 1fr; gap:12px;}
+  .form-grid .full{grid-column:1/-1;}
+
+  .empty{text-align:center; padding:50px 20px; color:var(--muted);}
+  .empty .big{font-size:32px; margin-bottom:10px;}
+
+  .tabs{display:flex; gap:4px; border-bottom:1px solid var(--border); margin-bottom:22px; flex-wrap:wrap;}
+  .tab{padding:10px 16px; font-size:13px; font-weight:600; color:var(--muted); border-bottom:2px solid transparent; background:none; border-top:none; border-left:none; border-right:none;}
+  .tab.active{color:var(--navy); border-bottom-color:var(--navy);}
+
+  .toast{position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:var(--navy); color:#fff; padding:11px 20px; border-radius:8px; font-size:13px; font-weight:500; z-index:200; box-shadow:0 4px 16px rgba(0,0,0,0.2); max-width:90vw; text-align:center;}
+  .toast.error{background:var(--red);}
+
+  table.log-table{width:100%; border-collapse:collapse; font-size:13px;}
+  table.log-table th{text-align:left; padding:9px 10px; background:var(--bg); color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.03em; border-bottom:1px solid var(--border);}
+  table.log-table td{padding:10px 10px; border-bottom:1px solid var(--border); vertical-align:top;}
+  table.log-table tr:last-child td{border-bottom:none;}
+
+  .icon-btn{background:none; border:none; color:var(--muted); padding:6px 8px; border-radius:6px; font-size:13px;}
+  .icon-btn:hover{background:var(--bg); color:var(--text);}
+
+  .spinner{width:28px; height:28px; border:3px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin .7s linear infinite; margin:0 auto;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .loading-screen{display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; gap:14px; color:var(--muted); font-size:13px;}
+
+  @media (max-width:640px){
+    .container{padding:18px 14px 50px;}
+    .emp-progress{width:100%;}
+    .form-grid{grid-template-columns:1fr;}
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+/* =====================================================================
+   ShanuDT IT Solutions - STEM OPT Training Portal (Supabase-backed)
+   ===================================================================== */
+
+// ---------- Supabase connection ----------
+const SUPABASE_URL = "https://twmacezbvftzfybeicwb.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_npCI1MT8TGJ8pBQl_W7VlQ_vBoj4rKI";
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const CURRICULUM = [
+"Java Fundamentals - Syntax, Data Types & Operators",
+"Control Flow - Conditionals & Loops",
+"Object-Oriented Programming I - Classes & Objects",
+"Object-Oriented Programming II - Inheritance & Polymorphism",
+"Encapsulation, Abstraction & Interfaces",
+"Exception Handling in Java",
+"Java Collections Framework I - List, Set",
+"Java Collections Framework II - Map, Queue",
+"Generics in Java",
+"Multithreading & Concurrency Basics",
+"File I/O & Serialization",
+"Java 8+ Features - Lambdas & Streams",
+"Functional Interfaces & Method References",
+"JDBC - Connecting Java to Databases",
+"SQL Fundamentals for Java Developers",
+"Maven & Project Build Lifecycle",
+"Introduction to J2EE / Jakarta EE Architecture",
+"Servlets I - Lifecycle & Request Handling",
+"Servlets II - Session Management",
+"JavaServer Pages (JSP) Fundamentals",
+"JSP Standard Tag Library (JSTL) & EL",
+"MVC Architecture in J2EE",
+"Enterprise JavaBeans (EJB) Overview",
+"Java Persistence API (JPA) Fundamentals",
+"Hibernate ORM I - Configuration & Mapping",
+"Hibernate ORM II - Relationships & Queries",
+"Spring Framework Fundamentals - IoC & DI",
+"Spring Configuration - Annotations & Beans",
+"Spring MVC I - Controllers & Views",
+"Spring MVC II - Form Handling & Validation",
+"Spring Boot Fundamentals",
+"Spring Boot REST API Development",
+"Spring Data JPA",
+"Spring Security Basics",
+"RESTful Web Services in Java",
+"SOAP Web Services Overview",
+"Unit Testing with JUnit & Mockito",
+"Application Servers - Tomcat & WildFly",
+"Logging, Debugging & Application Monitoring",
+"Capstone Review - Building a Full J2EE Application"
+];
+
+let CURRENT_USER = null; // {role:'employee'|'supervisor', employee: {...} | null}
+let activeTab = "overview";
+let EMPLOYEES_CACHE = []; // [{...employee, modules:[...]}]
+
+const root = document.getElementById("app");
+
+function addMonths(dateStr, n){
+  const d = new Date(dateStr+"T00:00:00");
+  d.setMonth(d.getMonth()+n);
+  return d.toISOString().slice(0,10);
+}
+function fmtDate(dateStr){
+  if(!dateStr) return "-";
+  const d = new Date(dateStr+"T00:00:00");
+  return d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
+}
+function todayStr(){ return new Date().toISOString().slice(0,10); }
+function initials(name){ return name.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase(); }
+
+function showToast(msg, isError){
+  const t = document.createElement("div");
+  t.className = "toast" + (isError ? " error" : "");
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(()=>t.remove(), 2600);
+}
+
+// ================= DATA LAYER (Supabase) =================
+async function dbGetSupervisorPassword(){
+  const {data, error} = await sb.from("supervisor").select("password").eq("id",1).single();
+  if(error){ console.error(error); return null; }
+  return data.password;
+}
+async function dbSetSupervisorPassword(newPass){
+  const {error} = await sb.from("supervisor").update({password:newPass}).eq("id",1);
+  if(error){ showToast("Failed to update password", true); return false; }
+  return true;
+}
+async function dbGetEmployeeByUsername(username){
+  const {data, error} = await sb.from("employees").select("*").eq("username", username).eq("active", true).maybeSingle();
+  if(error){ console.error(error); return null; }
+  return data;
+}
+async function dbGetAllEmployees(){
+  const {data, error} = await sb.from("employees").select("*").order("created_at", {ascending:true});
+  if(error){ console.error(error); return []; }
+  return data;
+}
+async function dbGetModules(employeeId){
+  const {data, error} = await sb.from("modules").select("*").eq("employee_id", employeeId).order("module_index", {ascending:true});
+  if(error){ console.error(error); return []; }
+  return data;
+}
+async function dbCreateEmployeeWithModules(emp){
+  const {data, error} = await sb.from("employees").insert({
+    username: emp.username, password: emp.password, name: emp.name,
+    role: emp.role, start_date: emp.startDate, active: true
+  }).select().single();
+  if(error){ showToast(error.message.includes("duplicate") ? "Username already taken" : "Failed to create employee", true); return null; }
+
+  const modules = CURRICULUM.map((title,i)=>({
+    employee_id: data.id,
+    module_index: i+1,
+    title,
+    due_date: addMonths(emp.startDate, Math.floor(i/2)),
+    status: "upcoming"
+  }));
+  const {error: modErr} = await sb.from("modules").insert(modules);
+  if(modErr){ showToast("Employee created but modules failed", true); console.error(modErr); }
+  return data;
+}
+async function dbUpdateEmployee(id, fields){
+  const {error} = await sb.from("employees").update(fields).eq("id", id);
+  if(error){ showToast("Update failed: "+error.message, true); return false; }
+  return true;
+}
+async function dbDeleteEmployee(id){
+  const {error} = await sb.from("employees").delete().eq("id", id);
+  if(error){ showToast("Delete failed", true); return false; }
+  return true;
+}
+async function dbUpdateModule(id, fields){
+  const {error} = await sb.from("modules").update(fields).eq("id", id);
+  if(error){ showToast("Update failed", true); return false; }
+  return true;
+}
+async function dbResetEmployeeProgress(employeeId, startDate){
+  const modules = CURRICULUM.map((title,i)=>({
+    module_index: i+1, due_date: addMonths(startDate, Math.floor(i/2)),
+    status: "upcoming", reflection: null, completed_date: null,
+    supervisor_signoff: false, signoff_date: null
+  }));
+  for(const m of modules){
+    await sb.from("modules").update({
+      due_date: m.due_date, status: m.status, reflection: m.reflection,
+      completed_date: m.completed_date, supervisor_signoff: m.supervisor_signoff, signoff_date: m.signoff_date
+    }).eq("employee_id", employeeId).eq("module_index", m.module_index);
+  }
+}
+
+async function loadEmployeesWithModules(){
+  const emps = await dbGetAllEmployees();
+  const full = [];
+  for(const e of emps){
+    const modules = await dbGetModules(e.id);
+    full.push({...e, modules});
+  }
+  EMPLOYEES_CACHE = full;
+  return full;
+}
+
+// ---------- Derived stats ----------
+function empStats(emp){
+  const total = emp.modules.length || 40;
+  const completed = emp.modules.filter(m=>m.status==="completed").length;
+  const pending = emp.modules.filter(m=>m.status==="pending_review").length;
+  const overdue = emp.modules.filter(m=> m.status!=="completed" && m.due_date < todayStr()).length;
+  const pct = total ? Math.round((completed/total)*100) : 0;
+  return {total, completed, pending, overdue, pct};
+}
+function moduleStatusBadge(m){
+  if(m.status==="completed") return `<span class="badge done">Completed</span>`;
+  if(m.status==="pending_review") return `<span class="badge review">Awaiting sign-off</span>`;
+  if(m.due_date < todayStr()) return `<span class="badge overdue">Overdue</span>`;
+  return `<span class="badge upcoming">Upcoming</span>`;
+}
+
+// ================= RENDER: LOGIN =================
+function renderLogin(){
+  root.innerHTML = `
+    <div class="login-wrap">
+      <div class="login-card">
+        <div class="login-logo">SD</div>
+        <h1>ShanuDT IT Solutions INC</h1>
+        <div class="sub">STEM OPT Training Portal</div>
+
+        <div class="role-toggle">
+          <button class="role-btn active" id="roleEmp" type="button">Employee</button>
+          <button class="role-btn" id="roleSup" type="button">Supervisor</button>
+        </div>
+
+        <div id="loginFields"></div>
+        <div class="error-text" id="loginError" style="display:none;"></div>
+        <button class="btn btn-primary" id="loginBtn" style="margin-top:6px;">Sign in</button>
+        <div class="login-note">This portal tracks individual STEM OPT training progress for I-983 compliance recordkeeping. Each employee has a separate, individually tracked, password-protected profile.</div>
+      </div>
+    </div>
+  `;
+
+  let role = "employee";
+  const fieldsEl = document.getElementById("loginFields");
+  const errEl = document.getElementById("loginError");
+
+  function renderFields(){
+    errEl.style.display = "none";
+    if(role==="employee"){
+      fieldsEl.innerHTML = `
+        <div class="field"><label>Username</label><input type="text" id="empUser" placeholder="e.g. jsmith" /></div>
+        <div class="field"><label>Password</label><input type="password" id="empPass" placeholder="Enter password" /></div>
+      `;
+    } else {
+      fieldsEl.innerHTML = `
+        <div class="field"><label>Supervisor password</label><input type="password" id="supPass" placeholder="Enter password" /></div>
+      `;
+    }
+  }
+  renderFields();
+
+  document.getElementById("roleEmp").onclick = ()=>{ role="employee"; document.getElementById("roleEmp").classList.add("active"); document.getElementById("roleSup").classList.remove("active"); renderFields(); };
+  document.getElementById("roleSup").onclick = ()=>{ role="supervisor"; document.getElementById("roleSup").classList.add("active"); document.getElementById("roleEmp").classList.remove("active"); renderFields(); };
+
+  document.getElementById("loginBtn").onclick = async ()=>{
+    const btn = document.getElementById("loginBtn");
+    btn.textContent = "Signing in..."; btn.disabled = true;
+    try{
+      if(role==="employee"){
+        const username = document.getElementById("empUser").value.trim();
+        const password = document.getElementById("empPass").value;
+        const emp = await dbGetEmployeeByUsername(username);
+        if(!emp || emp.password !== password){
+          errEl.textContent = "Incorrect username or password.";
+          errEl.style.display = "block";
+        } else {
+          emp.modules = await dbGetModules(emp.id);
+          CURRENT_USER = {role:"employee", employee: emp};
+          activeTab = "videos";
+          render();
+        }
+      } else {
+        const pass = document.getElementById("supPass").value;
+        const realPass = await dbGetSupervisorPassword();
+        if(pass === realPass){
+          CURRENT_USER = {role:"supervisor", employee:null};
+          activeTab = "overview";
+          await loadEmployeesWithModules();
+          render();
+        } else {
+          errEl.textContent = "Incorrect password.";
+          errEl.style.display = "block";
+        }
+      }
+    } catch(e){
+      console.error(e);
+      errEl.textContent = "Connection error. Check your internet connection and try again.";
+      errEl.style.display = "block";
+    } finally {
+      btn.textContent = "Sign in"; btn.disabled = false;
+    }
+  };
+}
+
+// ================= TOPBAR =================
+function renderTopbar(title){
+  const who = CURRENT_USER.role==="employee" ? CURRENT_USER.employee.name : "Supervisor / Evaluator";
+  return `
+    <div class="topbar">
+      <div class="topbar-left">
+        <div class="topbar-logo">SD</div>
+        <div class="topbar-title">ShanuDT IT Solutions <span>${title}</span></div>
+      </div>
+      <div class="topbar-right">
+        <span class="who">${who}</span>
+        <button class="logout-link" id="logoutBtn">Sign out</button>
+      </div>
+    </div>
+  `;
+}
+function wireLogout(){
+  document.getElementById("logoutBtn").onclick = ()=>{ CURRENT_USER=null; render(); };
+}
+
+// ================= EMPLOYEE VIEW =================
+async function renderEmployeeView(){
+  const emp = CURRENT_USER.employee;
+  emp.modules = await dbGetModules(emp.id);
+  const stats = empStats(emp);
+
+  root.innerHTML = `
+    ${renderTopbar("Training Portal")}
+    <div class="container">
+      <div class="page-head">
+        <div><h2>Hi, ${emp.name}</h2><div class="desc">${emp.role} &middot; STEM OPT start: ${fmtDate(emp.start_date)}</div></div>
+      </div>
+      <div class="stats-row">
+        <div class="stat-card"><div class="label">Overall progress</div><div class="value">${stats.pct}%</div></div>
+        <div class="stat-card"><div class="label">Completed</div><div class="value green">${stats.completed} / ${stats.total}</div></div>
+        <div class="stat-card"><div class="label">Awaiting sign-off</div><div class="value amber">${stats.pending}</div></div>
+        <div class="stat-card"><div class="label">Overdue</div><div class="value ${stats.overdue>0?'amber':''}">${stats.overdue}</div></div>
+      </div>
+      <div class="card"><h3>Overall completion</h3><div class="progress-track"><div class="progress-fill" style="width:${stats.pct}%"></div></div></div>
+      <div class="card"><h3>Your training modules</h3><div id="moduleList"></div></div>
+    </div>
+  `;
+
+  const list = document.getElementById("moduleList");
+  emp.modules.forEach(m=>{
+    const row = document.createElement("div");
+    row.className = "module-row";
+    row.innerHTML = `
+      <div class="module-num ${m.status==='completed'?'done':''}">${m.module_index}</div>
+      <div class="module-info">
+        <div class="title">${m.title}</div>
+        <div class="meta">Due ${fmtDate(m.due_date)}${m.completed_date ? ' &middot; Completed '+fmtDate(m.completed_date):''}${m.status==='pending_review' ? ' &middot; Pending supervisor review':''}</div>
+      </div>
+      <div>${moduleStatusBadge(m)}</div>
+      ${m.status==="upcoming" ? `<button class="btn btn-secondary btn-sm" data-id="${m.id}">Mark watched</button>` : ""}
+    `;
+    list.appendChild(row);
+  });
+  list.querySelectorAll("button[data-id]").forEach(btn=>{
+    btn.onclick = ()=> openReflectionModal(btn.dataset.id);
+  });
+  wireLogout();
+}
+
+function openReflectionModal(moduleId){
+  const emp = CURRENT_USER.employee;
+  const m = emp.modules.find(x=>x.id===moduleId);
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Module ${m.module_index}: ${m.title}</h3>
+      <div class="sub">Briefly describe what you learned and how it applies to your work. This is reviewed by your supervisor as part of your I-983 training record.</div>
+      <div class="field"><label>Reflection / summary</label><textarea id="reflectionText" placeholder="e.g. This module covered... I plan to apply this by..."></textarea></div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" id="cancelBtn">Cancel</button>
+        <button class="btn btn-primary" id="submitBtn" style="width:auto;">Submit for review</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById("cancelBtn").onclick = ()=> overlay.remove();
+  document.getElementById("submitBtn").onclick = async ()=>{
+    const text = document.getElementById("reflectionText").value.trim();
+    if(text.length < 10){ showToast("Please add a short reflection before submitting", true); return; }
+    const ok = await dbUpdateModule(m.id, {status:"pending_review", reflection:text, completed_date: todayStr()});
+    if(ok){ overlay.remove(); showToast("Submitted. Awaiting supervisor sign-off."); renderEmployeeView(); }
+  };
+}
+
+// ================= SUPERVISOR VIEW =================
+async function renderSupervisorView(){
+  root.innerHTML = `
+    ${renderTopbar("Supervisor Dashboard")}
+    <div class="container">
+      <div class="page-head">
+        <div><h2>Supervisor Dashboard</h2><div class="desc">Manage employees, review submissions, and export records</div></div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-secondary btn-sm" id="exportAllBtn">Export company log (CSV)</button>
+          <button class="btn btn-primary btn-sm" id="addEmpBtn">+ Add employee</button>
+        </div>
+      </div>
+      <div class="tabs">
+        <button class="tab ${activeTab==='overview'?'active':''}" data-tab="overview">Employees</button>
+        <button class="tab ${activeTab==='review'?'active':''}" data-tab="review">Pending review</button>
+        <button class="tab ${activeTab==='settings'?'active':''}" data-tab="settings">Settings</button>
+      </div>
+      <div id="tabContent"></div>
+    </div>
+  `;
+  wireLogout();
+  document.getElementById("exportAllBtn").onclick = exportCompanyCSV;
+  document.getElementById("addEmpBtn").onclick = ()=> openEmployeeForm(null);
+  root.querySelectorAll(".tab").forEach(t=> t.onclick = ()=>{ activeTab = t.dataset.tab; renderSupervisorView(); });
+
+  const content = document.getElementById("tabContent");
+  content.innerHTML = `<div class="loading-screen" style="min-height:200px;"><div class="spinner"></div>Loading...</div>`;
+  await loadEmployeesWithModules();
+
+  if(activeTab==="overview") renderOverviewTab(content);
+  else if(activeTab==="review") renderReviewTab(content);
+  else renderSettingsTab(content);
+}
+
+function renderOverviewTab(content){
+  if(EMPLOYEES_CACHE.length===0){
+    content.innerHTML = `<div class="card"><div class="empty"><div class="big">+</div>No employees yet. Click "Add employee" to get started.</div></div>`;
+    return;
+  }
+  let html = "";
+  EMPLOYEES_CACHE.forEach(emp=>{
+    const stats = empStats(emp);
+    html += `
+      <div class="emp-card">
+        <div class="clickzone" data-emp="${emp.id}">
+          <div class="avatar">${initials(emp.name)}</div>
+          <div class="emp-info">
+            <div class="name">${emp.name} ${!emp.active ? '<span class="badge inactive">Inactive</span>':''}</div>
+            <div class="role">${emp.role} &middot; Started ${fmtDate(emp.start_date)} &middot; @${emp.username}</div>
+          </div>
+          <div class="emp-progress">
+            <div class="pct"><span>${stats.completed}/${stats.total} modules</span><span>${stats.pct}%</span></div>
+            <div class="progress-track"><div class="progress-fill" style="width:${stats.pct}%"></div></div>
+          </div>
+          ${stats.pending>0 ? `<span class="badge review">${stats.pending} to review</span>` : ""}
+          ${stats.overdue>0 ? `<span class="badge overdue">${stats.overdue} overdue</span>` : ""}
+        </div>
+        <button class="icon-btn" data-edit="${emp.id}">Edit</button>
+      </div>
+    `;
+  });
+  content.innerHTML = html;
+  content.querySelectorAll(".clickzone").forEach(c=> c.onclick = ()=> openEmployeeDetail(c.dataset.emp));
+  content.querySelectorAll("[data-edit]").forEach(b=> b.onclick = (e)=>{ e.stopPropagation(); openEmployeeForm(b.dataset.edit); });
+}
+
+function renderReviewTab(content){
+  const pendingItems = [];
+  EMPLOYEES_CACHE.forEach(emp=> emp.modules.filter(m=>m.status==="pending_review").forEach(m=> pendingItems.push({emp,m})));
+
+  if(pendingItems.length===0){
+    content.innerHTML = `<div class="card"><div class="empty"><div class="big">&#10003;</div>All caught up &mdash; no modules awaiting review.</div></div>`;
+    return;
+  }
+  content.innerHTML = `<div class="card"><h3>Modules awaiting your sign-off (${pendingItems.length})</h3><div id="reviewList"></div></div>`;
+  const list = document.getElementById("reviewList");
+  pendingItems.forEach(({emp,m})=>{
+    const row = document.createElement("div");
+    row.className = "module-row";
+    row.innerHTML = `
+      <div class="module-num">${m.module_index}</div>
+      <div class="module-info">
+        <div class="title">${emp.name} &mdash; ${m.title}</div>
+        <div class="meta">Submitted ${fmtDate(m.completed_date)} &middot; "${(m.reflection||"").slice(0,90)}${(m.reflection||"").length>90?'...':''}"</div>
+      </div>
+      <button class="btn btn-primary btn-sm" data-mod="${m.id}">Sign off</button>
+    `;
+    list.appendChild(row);
+  });
+  list.querySelectorAll("button[data-mod]").forEach(btn=>{
+    btn.onclick = async ()=>{
+      btn.disabled = true; btn.textContent = "Saving...";
+      const ok = await dbUpdateModule(btn.dataset.mod, {status:"completed", supervisor_signoff:true, signoff_date: todayStr()});
+      if(ok){ showToast("Signed off"); renderSupervisorView(); }
+    };
+  });
+}
+
+function renderSettingsTab(content){
+  content.innerHTML = `
+    <div class="card" style="max-width:420px;">
+      <h3>Change supervisor password</h3>
+      <div class="field"><label>New password</label><input type="password" id="newSupPass" placeholder="Enter new password" /></div>
+      <button class="btn btn-primary" id="saveSupPass" style="width:auto;">Update password</button>
+    </div>
+  `;
+  document.getElementById("saveSupPass").onclick = async ()=>{
+    const val = document.getElementById("newSupPass").value;
+    if(val.length < 4){ showToast("Password too short", true); return; }
+    const ok = await dbSetSupervisorPassword(val);
+    if(ok){ showToast("Supervisor password updated"); document.getElementById("newSupPass").value=""; }
+  };
+}
+
+// ---------- Employee detail modal (view full transcript) ----------
+function openEmployeeDetail(empId){
+  const emp = EMPLOYEES_CACHE.find(e=>e.id===empId);
+  const stats = empStats(emp);
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:700px;">
+      <h3>${emp.name}</h3>
+      <div class="sub">${emp.role} &middot; STEM OPT start ${fmtDate(emp.start_date)} &middot; ${stats.completed}/${stats.total} completed (${stats.pct}%)</div>
+      <table class="log-table">
+        <thead><tr><th>#</th><th>Module</th><th>Due</th><th>Status</th><th>Signed off</th></tr></thead>
+        <tbody>
+          ${emp.modules.map(m=>`<tr><td>${m.module_index}</td><td>${m.title}</td><td>${fmtDate(m.due_date)}</td><td>${moduleStatusBadge(m)}</td><td>${m.signoff_date ? fmtDate(m.signoff_date) : "-"}</td></tr>`).join("")}
+        </tbody>
+      </table>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" id="exportEmpBtn">Export transcript (CSV)</button>
+        <button class="btn btn-primary" id="closeBtn" style="width:auto;">Close</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById("closeBtn").onclick = ()=> overlay.remove();
+  document.getElementById("exportEmpBtn").onclick = ()=> exportEmployeeCSV(emp);
+}
+
+// ---------- Add / Edit employee form (full admin control) ----------
+function openEmployeeForm(empId){
+  const isEdit = !!empId;
+  const emp = isEdit ? EMPLOYEES_CACHE.find(e=>e.id===empId) : null;
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>${isEdit ? "Edit employee" : "Add new employee"}</h3>
+      <div class="sub">${isEdit ? "Update profile details, reset their password, or deactivate them." : "Creates a profile and assigns the full 40-module curriculum based on their start date."}</div>
+      <div class="form-grid">
+        <div class="field full"><label>Full name</label><input type="text" id="fName" value="${isEdit?emp.name:''}" placeholder="e.g. Priya Sharma" /></div>
+        <div class="field"><label>Username (for login)</label><input type="text" id="fUser" value="${isEdit?emp.username:''}" placeholder="e.g. psharma" /></div>
+        <div class="field"><label>${isEdit ? "Reset password" : "Password"}</label><input type="text" id="fPass" placeholder="${isEdit ? 'Leave blank to keep current' : 'Set initial password'}" /></div>
+        <div class="field"><label>Job title / role</label><input type="text" id="fRole" value="${isEdit?emp.role:'Java/J2EE Developer'}" /></div>
+        <div class="field"><label>STEM OPT start date</label><input type="date" id="fStart" value="${isEdit?emp.start_date:''}" /></div>
+        ${isEdit ? `<div class="field"><label>Status</label><select id="fActive"><option value="true" ${emp.active?'selected':''}>Active</option><option value="false" ${!emp.active?'selected':''}>Inactive</option></select></div>` : ""}
+      </div>
+      ${isEdit ? `<div class="field" style="margin-top:8px;"><label><input type="checkbox" id="fReset" style="width:auto; margin-right:6px;"/>Reset all training progress (re-generates schedule from start date, clears completions)</label></div>` : ""}
+      <div class="modal-actions" style="justify-content:space-between;">
+        <div>${isEdit ? `<button class="btn btn-danger btn-sm" id="deleteBtn" type="button">Delete employee</button>` : ""}</div>
+        <div style="display:flex; gap:10px;">
+          <button class="btn btn-secondary" id="cancelBtn" type="button">Cancel</button>
+          <button class="btn btn-primary" id="saveBtn" style="width:auto;" type="button">${isEdit?"Save changes":"Create employee"}</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById("cancelBtn").onclick = ()=> overlay.remove();
+
+  if(isEdit){
+    document.getElementById("deleteBtn").onclick = async ()=>{
+      if(!confirm(`Permanently delete ${emp.name} and all their training records? This cannot be undone.`)) return;
+      const ok = await dbDeleteEmployee(emp.id);
+      if(ok){ showToast("Employee deleted"); overlay.remove(); renderSupervisorView(); }
+    };
+  }
+
+  document.getElementById("saveBtn").onclick = async ()=>{
+    const name = document.getElementById("fName").value.trim();
+    const username = document.getElementById("fUser").value.trim();
+    const pass = document.getElementById("fPass").value;
+    const roleVal = document.getElementById("fRole").value.trim();
+    const start = document.getElementById("fStart").value;
+
+    if(!name || !username || !start || (!isEdit && !pass)){
+      showToast("Please fill in all required fields", true); return;
+    }
+
+    const saveBtn = document.getElementById("saveBtn");
+    saveBtn.disabled = true; saveBtn.textContent = "Saving...";
+
+    if(isEdit){
+      const fields = {name, username, role: roleVal, start_date: start, active: document.getElementById("fActive").value === "true"};
+      if(pass) fields.password = pass;
+      const ok = await dbUpdateEmployee(emp.id, fields);
+      if(ok){
+        const doReset = document.getElementById("fReset").checked;
+        if(doReset) await dbResetEmployeeProgress(emp.id, start);
+        showToast("Employee updated"); overlay.remove(); renderSupervisorView();
+      } else { saveBtn.disabled=false; saveBtn.textContent="Save changes"; }
+    } else {
+      const created = await dbCreateEmployeeWithModules({name, username, password:pass, role:roleVal, startDate:start});
+      if(created){ showToast("Employee created"); overlay.remove(); renderSupervisorView(); }
+      else { saveBtn.disabled=false; saveBtn.textContent="Create employee"; }
+    }
+  };
+}
+
+// ---------- CSV export ----------
+function csvEscape(s){ if(s==null) return ""; return `"${String(s).replace(/"/g,'""')}"`; }
+function downloadCSV(filename, rows){
+  const csv = rows.map(r=>r.map(csvEscape).join(",")).join("\n");
+  const blob = new Blob([csv], {type:"text/csv;charset=utf-8;"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+function exportEmployeeCSV(emp){
+  const rows = [["Employee","Role","Start Date","Module #","Topic","Due Date","Status","Completed Date","Supervisor Signoff Date","Reflection"]];
+  emp.modules.forEach(m=> rows.push([emp.name, emp.role, emp.start_date, m.module_index, m.title, m.due_date, m.status, m.completed_date||"", m.signoff_date||"", m.reflection||""]));
+  downloadCSV(`ShanuDT_${emp.name.replace(/\s+/g,'_')}_Training_Transcript.csv`, rows);
+  showToast("Transcript exported");
+}
+function exportCompanyCSV(){
+  const rows = [["Employee","Role","Start Date","Module #","Topic","Due Date","Status","Completed Date","Supervisor Signoff Date","Reflection"]];
+  EMPLOYEES_CACHE.forEach(emp=> emp.modules.forEach(m=> rows.push([emp.name, emp.role, emp.start_date, m.module_index, m.title, m.due_date, m.status, m.completed_date||"", m.signoff_date||"", m.reflection||""])));
+  downloadCSV(`ShanuDT_Company_Training_Log_${todayStr()}.csv`, rows);
+  showToast("Company-wide log exported");
+}
+
+// ================= MAIN RENDER =================
+function render(){
+  if(!CURRENT_USER){ renderLogin(); return; }
+  if(CURRENT_USER.role==="employee") renderEmployeeView();
+  else renderSupervisorView();
+}
+
+(async function init(){
+  root.innerHTML = `<div class="loading-screen"><div class="spinner"></div>Connecting to database...</div>`;
+  try{
+    await sb.from("supervisor").select("id").limit(1);
+    render();
+  }catch(e){
+    root.innerHTML = `<div class="loading-screen"><div style="color:#A32D2D; max-width:400px; text-align:center;">Could not connect to the database. Check your internet connection and reload the page.</div></div>`;
+  }
+})();
+</script>
+</body>
+</html>
