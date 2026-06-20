@@ -494,11 +494,13 @@ async function renderEmployeeView(){
   visibleModules.forEach(m=>{
     const row = document.createElement("div");
     row.className = "module-row";
+    row.style.flexWrap = "wrap";
     row.innerHTML = `
       <div class="module-num ${m.status==='completed'?'done':''}">${m.module_index}</div>
       <div class="module-info">
         <div class="title">${m.title}</div>
-        <div class="meta">Due ${fmtDate(m.due_date)}${m.completed_date ? ' &middot; Completed '+fmtDate(m.completed_date):''}${m.status==='pending_review' ? ' &middot; Pending supervisor review':''}</div>
+        <div class="meta">Due ${fmtDate(m.due_date)}${m.completed_date ? ' &middot; Completed '+fmtDate(m.completed_date):''}${m.status==='pending_review' ? ' &middot; Pending supervisor review':''}${m.status==='completed' && m.signoff_date ? ' &middot; Signed off '+fmtDate(m.signoff_date):''}</div>
+        ${m.reflection ? `<div style="margin-top:8px; padding:10px 12px; background:var(--bg); border-radius:8px; font-size:13px; color:var(--text); border-left:3px solid var(--accent);"><strong style="font-size:11px; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); display:block; margin-bottom:4px;">Your summary</strong>${m.reflection}</div>` : ""}
       </div>
       <div>${moduleStatusBadge(m)}</div>
       <div style="display:flex; gap:8px;">
@@ -800,6 +802,7 @@ function renderSettingsTab(content){
 function openEmployeeDetail(empId){
   const emp = EMPLOYEES_CACHE.find(e=>e.id===empId);
   const stats = empStats(emp);
+  const withReflections = emp.modules.filter(m=>m.reflection);
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
   overlay.innerHTML = `
@@ -812,6 +815,18 @@ function openEmployeeDetail(empId){
           ${emp.modules.map(m=>`<tr><td>${m.module_index}</td><td>${m.title}</td><td>${fmtDate(m.due_date)}</td><td>${moduleStatusBadge(m)}</td><td>${m.signoff_date ? fmtDate(m.signoff_date) : "-"}</td><td>${m.video_url ? `<a href="${m.video_url}" target="_blank" rel="noopener noreferrer">Link</a>` : '-'}</td></tr>`).join("")}
         </tbody>
       </table>
+      ${withReflections.length>0 ? `
+        <h3 style="margin-top:22px;">Submitted summaries (${withReflections.length})</h3>
+        <div>
+          ${withReflections.map(m=>`
+            <div style="margin-bottom:12px; padding:12px 14px; background:var(--bg); border-radius:8px; border-left:3px solid var(--accent);">
+              <div style="font-size:12px; font-weight:700; color:var(--navy); margin-bottom:4px;">Module ${m.module_index}: ${m.title}</div>
+              <div style="font-size:11px; color:var(--muted); margin-bottom:6px;">Submitted ${fmtDate(m.completed_date)}${m.signoff_date ? ' &middot; Signed off '+fmtDate(m.signoff_date) : ' &middot; Awaiting sign-off'}</div>
+              <div style="font-size:13px; color:var(--text);">${m.reflection}</div>
+            </div>
+          `).join("")}
+        </div>
+      ` : ""}
       <div class="modal-actions">
         <button class="btn btn-secondary" id="exportEmpBtn">Export transcript (CSV)</button>
         <button class="btn btn-primary" id="closeBtn" style="width:auto;">Close</button>
