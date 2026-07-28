@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -85,6 +84,24 @@
   .badge.overdue{background:var(--red-bg); color:var(--red);}
   .badge.review{background:var(--accent-light); color:var(--accent);}
   .badge.inactive{background:#EEF0F3; color:var(--muted);}
+  .badge.approved{background:var(--green-bg); color:var(--green);}
+  .badge.submitted{background:var(--amber-bg); color:var(--amber);}
+  .badge.draft{background:#EEF0F3; color:var(--muted);}
+
+  .id-card{display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:14px; margin-bottom:6px;}
+  .id-card .item .k{font-size:11px; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); font-weight:600; margin-bottom:3px;}
+  .id-card .item .v{font-size:14px; font-weight:600; color:var(--text);}
+  .week-row{display:flex; align-items:center; gap:14px; padding:10px 0; border-bottom:1px solid var(--border);}
+  .week-row:last-child{border-bottom:none;}
+  .week-row .wlabel{flex:1; font-size:13px; color:var(--text);}
+  .week-row input[type=number]{width:100px; padding:8px 10px; border:1px solid var(--border); border-radius:8px; font-size:14px;}
+  .month-nav{display:flex; align-items:center; gap:10px; margin-bottom:4px;}
+  .month-nav .mtitle{font-size:15px; font-weight:700; color:var(--navy); min-width:150px; text-align:center;}
+  .ts-total{font-size:13px; color:var(--muted); margin-top:6px;}
+  .ts-total strong{color:var(--navy); font-size:15px;}
+  .ts-history-row{display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--border); font-size:13px;}
+  .ts-history-row:last-child{border-bottom:none;}
+  .ts-history-row .link{color:var(--accent); font-weight:600; background:none; border:none; cursor:pointer; font-size:13px; padding:0;}
 
   .emp-card{background:var(--card); border:1px solid var(--border); border-radius:var(--radius-lg); padding:18px 20px; margin-bottom:14px; display:flex; align-items:center; gap:16px; flex-wrap:wrap;}
   .emp-card .clickzone{display:flex; align-items:center; gap:16px; flex:1; cursor:pointer; min-width:240px;}
@@ -258,7 +275,8 @@ async function dbGetModules(employeeId){
 async function dbCreateEmployeeWithModules(emp){
   const {data, error} = await sb.from("employees").insert({
     username: emp.username, password: emp.password, name: emp.name,
-    role: emp.role, start_date: emp.startDate, email: emp.email || null, active: true
+    role: emp.role, start_date: emp.startDate, email: emp.email || null, active: true,
+    employee_code: emp.employeeCode || null, project_id: emp.projectId || null
   }).select().single();
   if(error){ showToast(error.message.includes("duplicate") ? "Username already taken" : "Failed to create employee", true); return null; }
 
@@ -316,6 +334,74 @@ async function dbResetEmployeeProgress(employeeId, startDate){
       due_date: m.due_date, status: m.status, reflection: m.reflection,
       completed_date: m.completed_date, supervisor_signoff: m.supervisor_signoff, signoff_date: m.signoff_date
     }).eq("employee_id", employeeId).eq("module_index", m.module_index);
+  }
+}
+
+// ---------- Timesheets data layer ----------
+function mondaysInMonth(year, month /*1-12*/){
+  // A week (Mon-Sun) belongs to the month that contains its Monday (start date).
+  const weeks = [];
+  const daysInMonth = new Date(year, month, 0).getDate();
+  for(let day=1; day<=daysInMonth; day++){
+    const d = new Date(year, month-1, day);
+    if(d.getDay() === 1){ // Monday
+      const start = new Date(year, month-1, day);
+      const end = addDays(start.toISOString().slice(0,10), 6);
+      weeks.push({week_start: start.toISOString().slice(0,10), week_end: end});
+    }
+  }
+  return weeks;
+}
+function monthLabel(year, month){
+  return new Date(year, month-1, 1).toLocaleDateString("en-US",{month:"long", year:"numeric"});
+}
+async function dbGetOrCreateTimesheet(employeeId, year, month){
+  let {data, error} = await sb.from("timesheets").select("*, timesheet_weeks(*)").eq("employee_id", employeeId).eq("year", year).eq("month", month).maybeSingle();
+  if(error){ console.error(error); return null; }
+  if(!data){
+    const {data: created, error: insErr} = await sb.from("timesheets").insert({
+      employee_id: employeeId, year, month, status: "draft"
+    }).select("*, timesheet_weeks(*)").single();
+    if(insErr){ console.error(insErr); return null; }
+    data = created;
+  }
+  if(!data.timesheet_weeks) data.timesheet_weeks = [];
+  return data;
+}
+async function dbGetTimesheetHistory(employeeId){
+  const {data, error} = await sb.from("timesheets").select("*, timesheet_weeks(*)").eq("employee_id", employeeId).order("year",{ascending:false}).order("month",{ascending:false});
+  if(error){ console.error(error); return []; }
+  return data || [];
+}
+async function dbSaveTimesheetWeeks(timesheetId, weekRows){
+  const rows = weekRows.map(w=>({timesheet_id: timesheetId, week_start: w.week_start, week_end: w.week_end, hours: w.hours}));
+  const {error} = await sb.from("timesheet_weeks").upsert(rows, {onConflict:"timesheet_id,week_start"});
+  if(error){ console.error(error); showToast("Failed to save hours", true); return false; }
+  return true;
+}
+async function dbUpdateTimesheet(id, fields){
+  const {error} = await sb.from("timesheets").update(fields).eq("id", id);
+  if(error){ console.error(error); showToast("Failed to save timesheet", true); return false; }
+  return true;
+}
+async function dbGetPendingTimesheets(){
+  const {data, error} = await sb.from("timesheets").select("*, timesheet_weeks(*), employees(id,name,role,project_id,employee_code)").eq("status","submitted").order("submitted_at",{ascending:true});
+  if(error){ console.error(error); return []; }
+  return data || [];
+}
+async function dbGetAllTimesheets(){
+  const {data, error} = await sb.from("timesheets").select("*, timesheet_weeks(*), employees(id,name,role,project_id,employee_code)").order("year",{ascending:false}).order("month",{ascending:false});
+  if(error){ console.error(error); return []; }
+  return data || [];
+}
+function timesheetTotalHours(ts){
+  return (ts.timesheet_weeks||[]).reduce((s,w)=> s + (parseFloat(w.hours)||0), 0);
+}
+async function notifySupervisorOfTimesheet(payload){
+  try{
+    await sb.functions.invoke("notify-timesheet-submission", { body: payload });
+  }catch(e){
+    console.error("Notification failed (timesheet was still submitted):", e);
   }
 }
 
@@ -461,17 +547,36 @@ function isModuleVisibleToEmployee(m){
 
 async function renderEmployeeView(){
   const emp = CURRENT_USER.employee;
-  emp.modules = await dbGetModules(emp.id);
-  const stats = empStats(emp);
-  const visibleModules = emp.modules.filter(isModuleVisibleToEmployee);
-  const hiddenCount = emp.modules.length - visibleModules.length;
-
   root.innerHTML = `
     ${renderTopbar("Training Portal")}
     <div class="container">
       <div class="page-head">
         <div><h2>Hi, ${emp.name}</h2><div class="desc">${emp.role} &middot; STEM OPT start: ${fmtDate(emp.start_date)}</div></div>
       </div>
+      <div class="tabs">
+        <button class="tab ${activeTab==='videos'?'active':''}" data-tab="videos">Training</button>
+        <button class="tab ${activeTab==='timesheets'?'active':''}" data-tab="timesheets">Timesheets</button>
+      </div>
+      <div id="empTabContent"></div>
+    </div>
+  `;
+  wireLogout();
+  root.querySelectorAll(".tab").forEach(t=> t.onclick = ()=>{ activeTab = t.dataset.tab; renderEmployeeView(); });
+
+  const content = document.getElementById("empTabContent");
+  content.innerHTML = `<div class="loading-screen" style="min-height:200px;"><div class="spinner"></div>Loading...</div>`;
+
+  if(activeTab === "timesheets") await renderEmployeeTimesheetsTab(content, emp);
+  else await renderEmployeeTrainingTab(content, emp);
+}
+
+async function renderEmployeeTrainingTab(content, emp){
+  emp.modules = await dbGetModules(emp.id);
+  const stats = empStats(emp);
+  const visibleModules = emp.modules.filter(isModuleVisibleToEmployee);
+  const hiddenCount = emp.modules.length - visibleModules.length;
+
+  content.innerHTML = `
       <div class="stats-row">
         <div class="stat-card"><div class="label">Overall progress</div><div class="value">${stats.pct}%</div></div>
         <div class="stat-card"><div class="label">Completed</div><div class="value green">${stats.completed} / ${stats.total}</div></div>
@@ -484,7 +589,6 @@ async function renderEmployeeView(){
         <div id="moduleList"></div>
         ${hiddenCount > 0 ? `<p style="font-size:12px; color:var(--muted); margin-top:14px;">${hiddenCount} upcoming module(s) will appear here as their assigned month arrives.</p>` : ""}
       </div>
-    </div>
   `;
 
   const list = document.getElementById("moduleList");
@@ -513,7 +617,6 @@ async function renderEmployeeView(){
   list.querySelectorAll("button[data-id]").forEach(btn=>{
     btn.onclick = ()=> openReflectionModal(btn.dataset.id);
   });
-  wireLogout();
 }
 
 function openReflectionModal(moduleId){
@@ -542,6 +645,181 @@ function openReflectionModal(moduleId){
   };
 }
 
+// ================= EMPLOYEE TIMESHEETS =================
+let TS_VIEW_YEAR = new Date().getFullYear();
+let TS_VIEW_MONTH = new Date().getMonth()+1; // 1-12
+
+async function renderEmployeeTimesheetsTab(content, emp){
+  const ts = await dbGetOrCreateTimesheet(emp.id, TS_VIEW_YEAR, TS_VIEW_MONTH);
+  const history = await dbGetTimesheetHistory(emp.id);
+
+  if(!ts){
+    content.innerHTML = `<div class="card"><div class="empty">Could not load timesheet. Please refresh.</div></div>`;
+    return;
+  }
+
+  const weeks = mondaysInMonth(TS_VIEW_YEAR, TS_VIEW_MONTH);
+  const weekHoursMap = {};
+  (ts.timesheet_weeks||[]).forEach(w=> weekHoursMap[w.week_start] = w.hours);
+  const total = weeks.reduce((s,w)=> s + (parseFloat(weekHoursMap[w.week_start])||0), 0);
+  const isLocked = ts.status === "approved";
+  const idMissing = !emp.project_id || !emp.employee_code;
+
+  content.innerHTML = `
+    <div class="card">
+      <h3>Your details</h3>
+      <div class="id-card">
+        <div class="item"><div class="k">Full name</div><div class="v">${emp.name}</div></div>
+        <div class="item"><div class="k">Job title</div><div class="v">${emp.role || "-"}</div></div>
+        <div class="item"><div class="k">Employee ID</div><div class="v">${emp.employee_code || "Not yet assigned"}</div></div>
+        <div class="item"><div class="k">Project ID</div><div class="v">${emp.project_id || "Not yet assigned"}</div></div>
+      </div>
+      ${idMissing ? `<p style="font-size:12px; color:var(--muted); margin-top:4px;">Your Employee ID / Project ID will show here once your supervisor assigns them.</p>` : ""}
+    </div>
+
+    <div class="card">
+      <div class="month-nav">
+        <button class="btn btn-secondary btn-sm" id="tsPrev" type="button">&larr;</button>
+        <div class="mtitle">${monthLabel(TS_VIEW_YEAR, TS_VIEW_MONTH)}</div>
+        <button class="btn btn-secondary btn-sm" id="tsNext" type="button">&rarr;</button>
+        <span style="margin-left:auto;">${tsStatusBadge(ts.status)}</span>
+      </div>
+      ${ts.supervisor_note ? `<div style="margin:10px 0; padding:10px 12px; background:var(--amber-bg); border-radius:8px; font-size:13px; color:var(--text); border-left:3px solid var(--amber);"><strong style="font-size:11px; text-transform:uppercase; color:var(--amber);">Note from supervisor</strong><br/>${ts.supervisor_note}</div>` : ""}
+
+      <h3 style="margin-top:14px;">Weekly hours</h3>
+      <div id="weekList"></div>
+      <div class="ts-total">Total for month: <strong>${total}</strong> hours</div>
+
+      <div class="field full" style="margin-top:16px;">
+        <label>What did you work on this month?</label>
+        <textarea id="workSummary" placeholder="Describe the work you completed this month..." ${isLocked?"disabled":""}>${ts.work_summary || ""}</textarea>
+      </div>
+
+      ${isLocked ? `
+        <div style="margin-top:10px; padding:12px 14px; background:var(--green-bg); border-radius:8px; font-size:13px; color:var(--green); font-weight:600;">
+          &#10003; Approved${ts.approved_at ? " on "+fmtDate(ts.approved_at.slice(0,10)) : ""}. This timesheet is locked.
+        </div>
+      ` : `
+        <div class="modal-actions" style="justify-content:flex-end; margin-top:16px;">
+          <button class="btn btn-secondary" id="tsSaveBtn" type="button" style="width:auto;">Save</button>
+          <button class="btn btn-primary" id="tsSubmitBtn" type="button" style="width:auto;">${ts.status==="submitted" ? "Update submission" : "Submit for approval"}</button>
+        </div>
+      `}
+    </div>
+
+    <div class="card">
+      <h3>History</h3>
+      <div id="tsHistory"></div>
+    </div>
+  `;
+
+  const weekList = document.getElementById("weekList");
+  weeks.forEach(w=>{
+    const row = document.createElement("div");
+    row.className = "week-row";
+    row.innerHTML = `
+      <div class="wlabel">Week of ${fmtDate(w.week_start)} &ndash; ${fmtDate(w.week_end)}</div>
+      <input type="number" min="0" max="168" step="0.25" data-week="${w.week_start}" value="${weekHoursMap[w.week_start] ?? ""}" placeholder="0" ${isLocked?"disabled":""} />
+    `;
+    weekList.appendChild(row);
+  });
+  weekList.querySelectorAll("input[data-week]").forEach(inp=>{
+    inp.oninput = ()=>{
+      const t = weeks.reduce((s,w)=>{
+        const el = weekList.querySelector(`input[data-week="${w.week_start}"]`);
+        return s + (parseFloat(el.value)||0);
+      },0);
+      content.querySelector(".ts-total strong").textContent = t;
+    };
+  });
+
+  const histEl = document.getElementById("tsHistory");
+  if(history.length===0){
+    histEl.innerHTML = `<div class="empty" style="padding:20px 10px;">No timesheets yet.</div>`;
+  } else {
+    histEl.innerHTML = "";
+    history.forEach(h=>{
+      const row = document.createElement("div");
+      row.className = "ts-history-row";
+      row.innerHTML = `
+        <span>${monthLabel(h.year, h.month)} &middot; ${timesheetTotalHours(h)} hrs</span>
+        <span style="display:flex; align-items:center; gap:10px;">${tsStatusBadge(h.status)}<button class="link" data-y="${h.year}" data-m="${h.month}">View</button></span>
+      `;
+      histEl.appendChild(row);
+    });
+    histEl.querySelectorAll("button[data-y]").forEach(b=>{
+      b.onclick = ()=>{ TS_VIEW_YEAR = parseInt(b.dataset.y); TS_VIEW_MONTH = parseInt(b.dataset.m); renderEmployeeView(); };
+    });
+  }
+
+  document.getElementById("tsPrev").onclick = ()=>{
+    TS_VIEW_MONTH--; if(TS_VIEW_MONTH<1){ TS_VIEW_MONTH=12; TS_VIEW_YEAR--; }
+    renderEmployeeView();
+  };
+  document.getElementById("tsNext").onclick = ()=>{
+    TS_VIEW_MONTH++; if(TS_VIEW_MONTH>12){ TS_VIEW_MONTH=1; TS_VIEW_YEAR++; }
+    renderEmployeeView();
+  };
+
+  if(!isLocked){
+    async function collectAndSave(){
+      const weekRows = weeks.map(w=>({
+        week_start: w.week_start, week_end: w.week_end,
+        hours: parseFloat(weekList.querySelector(`input[data-week="${w.week_start}"]`).value) || 0
+      }));
+      const summary = document.getElementById("workSummary").value.trim();
+      const okWeeks = await dbSaveTimesheetWeeks(ts.id, weekRows);
+      const okSummary = await dbUpdateTimesheet(ts.id, {work_summary: summary});
+      return okWeeks && okSummary;
+    }
+
+    document.getElementById("tsSaveBtn").onclick = async ()=>{
+      const btn = document.getElementById("tsSaveBtn");
+      btn.disabled = true; btn.textContent = "Saving...";
+      const ok = await collectAndSave();
+      if(ok){ showToast("Saved"); renderEmployeeView(); }
+      else { btn.disabled=false; btn.textContent="Save"; }
+    };
+
+    document.getElementById("tsSubmitBtn").onclick = async ()=>{
+      const summary = document.getElementById("workSummary").value.trim();
+      if(summary.length < 10){ showToast("Please describe the work you did this month before submitting", true); return; }
+      const total = weeks.reduce((s,w)=> s + (parseFloat(weekList.querySelector(`input[data-week="${w.week_start}"]`).value)||0), 0);
+      if(total <= 0){ showToast("Please enter at least some hours before submitting", true); return; }
+
+      const btn = document.getElementById("tsSubmitBtn");
+      btn.disabled = true; btn.textContent = "Submitting...";
+      const ok = await collectAndSave();
+      if(!ok){ btn.disabled=false; btn.textContent="Submit for approval"; return; }
+
+      const wasAlreadySubmitted = ts.status === "submitted";
+      const fields = {status:"submitted", supervisor_note: null};
+      if(!wasAlreadySubmitted) fields.submitted_at = new Date().toISOString();
+      await dbUpdateTimesheet(ts.id, fields);
+
+      if(!wasAlreadySubmitted){
+        await notifySupervisorOfTimesheet({
+          to: "sravan@shanudt.com",
+          employeeName: emp.name,
+          jobTitle: emp.role || "",
+          employeeCode: emp.employee_code || "",
+          projectId: emp.project_id || "",
+          month: monthLabel(TS_VIEW_YEAR, TS_VIEW_MONTH),
+          totalHours: total
+        });
+      }
+      showToast(wasAlreadySubmitted ? "Submission updated" : "Submitted for approval");
+      renderEmployeeView();
+    };
+  }
+}
+
+function tsStatusBadge(status){
+  if(status==="approved") return `<span class="badge approved">Approved</span>`;
+  if(status==="submitted") return `<span class="badge submitted">Pending approval</span>`;
+  return `<span class="badge draft">Draft</span>`;
+}
+
 // ================= SUPERVISOR VIEW =================
 async function renderSupervisorView(){
   root.innerHTML = `
@@ -557,6 +835,7 @@ async function renderSupervisorView(){
       <div class="tabs">
         <button class="tab ${activeTab==='overview'?'active':''}" data-tab="overview">Employees</button>
         <button class="tab ${activeTab==='review'?'active':''}" data-tab="review">Pending review</button>
+        <button class="tab ${activeTab==='timesheets'?'active':''}" data-tab="timesheets">Timesheets</button>
         <button class="tab ${activeTab==='content'?'active':''}" data-tab="content">Course content</button>
         <button class="tab ${activeTab==='settings'?'active':''}" data-tab="settings">Settings</button>
       </div>
@@ -574,6 +853,7 @@ async function renderSupervisorView(){
 
   if(activeTab==="overview") renderOverviewTab(content);
   else if(activeTab==="review") renderReviewTab(content);
+  else if(activeTab==="timesheets") await renderTimesheetsTab(content);
   else if(activeTab==="content") renderContentTab(content);
   else renderSettingsTab(content);
 }
@@ -640,6 +920,133 @@ function renderReviewTab(content){
       if(ok){ showToast("Signed off"); renderSupervisorView(); }
     };
   });
+}
+
+// ---------- Supervisor: Timesheets tab ----------
+async function renderTimesheetsTab(content){
+  const [pending, all] = await Promise.all([dbGetPendingTimesheets(), dbGetAllTimesheets()]);
+
+  let html = "";
+  html += `<div class="card"><h3>Awaiting your approval (${pending.length})</h3>`;
+  if(pending.length===0){
+    html += `<div class="empty" style="padding:20px 10px;">&#10003; No timesheets waiting on you.</div>`;
+  } else {
+    html += `<div id="pendingTsList"></div>`;
+  }
+  html += `</div>`;
+
+  html += `<div class="card"><h3>All timesheets</h3>`;
+  if(all.length===0){
+    html += `<div class="empty" style="padding:20px 10px;">No timesheets submitted yet.</div>`;
+  } else {
+    html += `<table class="log-table"><thead><tr><th>Employee</th><th>Month</th><th>Hours</th><th>Status</th><th></th></tr></thead><tbody>`;
+    all.forEach(h=>{
+      html += `<tr>
+        <td>${h.employees ? h.employees.name : "-"}</td>
+        <td>${monthLabel(h.year, h.month)}</td>
+        <td>${timesheetTotalHours(h)}</td>
+        <td>${tsStatusBadge(h.status)}</td>
+        <td><button class="icon-btn" data-view="${h.id}">View</button></td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+  }
+  html += `
+    <div style="margin-top:14px;">
+      <button class="btn btn-secondary btn-sm" id="exportTsBtn" type="button">Export all timesheets (CSV)</button>
+    </div>
+  </div>`;
+
+  content.innerHTML = html;
+
+  if(pending.length>0){
+    const list = document.getElementById("pendingTsList");
+    pending.forEach(h=>{
+      const row = document.createElement("div");
+      row.className = "module-row";
+      row.innerHTML = `
+        <div class="module-info">
+          <div class="title">${h.employees ? h.employees.name : "-"} &mdash; ${monthLabel(h.year, h.month)}</div>
+          <div class="meta">${timesheetTotalHours(h)} hours &middot; Submitted ${h.submitted_at ? fmtDate(h.submitted_at.slice(0,10)) : "-"}</div>
+        </div>
+        <button class="btn btn-primary btn-sm" data-review="${h.id}">Review</button>
+      `;
+      list.appendChild(row);
+    });
+    list.querySelectorAll("button[data-review]").forEach(btn=>{
+      btn.onclick = ()=> openTimesheetReviewModal(pending.find(h=>h.id===btn.dataset.review) || all.find(h=>h.id===btn.dataset.review));
+    });
+  }
+
+  content.querySelectorAll("button[data-view]").forEach(btn=>{
+    btn.onclick = ()=> openTimesheetReviewModal(all.find(h=>h.id===btn.dataset.view));
+  });
+
+  document.getElementById("exportTsBtn").onclick = ()=> exportTimesheetsCSV(all);
+}
+
+function openTimesheetReviewModal(h){
+  if(!h) return;
+  const emp = h.employees || {};
+  const weeks = (h.timesheet_weeks||[]).slice().sort((a,b)=> a.week_start.localeCompare(b.week_start));
+  const total = timesheetTotalHours(h);
+  const canAct = h.status === "submitted";
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:600px;">
+      <h3>${emp.name || "-"} &mdash; ${monthLabel(h.year, h.month)}</h3>
+      <div class="sub">${tsStatusBadge(h.status)}</div>
+      <div class="id-card" style="margin-top:14px;">
+        <div class="item"><div class="k">Job title</div><div class="v">${emp.role || "-"}</div></div>
+        <div class="item"><div class="k">Employee ID</div><div class="v">${emp.employee_code || "-"}</div></div>
+        <div class="item"><div class="k">Project ID</div><div class="v">${emp.project_id || "-"}</div></div>
+        <div class="item"><div class="k">Total hours</div><div class="v">${total}</div></div>
+      </div>
+      <h3 style="margin-top:18px;">Weekly breakdown</h3>
+      <table class="log-table">
+        <thead><tr><th>Week</th><th>Hours</th></tr></thead>
+        <tbody>${weeks.map(w=>`<tr><td>${fmtDate(w.week_start)} &ndash; ${fmtDate(w.week_end)}</td><td>${w.hours}</td></tr>`).join("")}</tbody>
+      </table>
+      <h3 style="margin-top:18px;">Work summary</h3>
+      <div style="font-size:13px; color:var(--text); padding:12px 14px; background:var(--bg); border-radius:8px;">${h.work_summary || "-"}</div>
+      ${canAct ? `
+        <div class="field full" style="margin-top:16px;"><label>Note back to employee (optional, sent if you request changes)</label><textarea id="tsNote" placeholder="e.g. Please double check week of..."></textarea></div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" id="tsRejectBtn" type="button">Request changes</button>
+          <button class="btn btn-primary" id="tsApproveBtn" type="button" style="width:auto;">Approve</button>
+        </div>
+      ` : `
+        <div class="modal-actions"><button class="btn btn-primary" id="tsCloseBtn" type="button" style="width:auto;">Close</button></div>
+      `}
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  if(canAct){
+    document.getElementById("tsApproveBtn").onclick = async ()=>{
+      const ok = await dbUpdateTimesheet(h.id, {status:"approved", approved_at: new Date().toISOString(), supervisor_note: null});
+      if(ok){ showToast("Timesheet approved"); overlay.remove(); renderSupervisorView(); }
+    };
+    document.getElementById("tsRejectBtn").onclick = async ()=>{
+      const note = document.getElementById("tsNote").value.trim();
+      const ok = await dbUpdateTimesheet(h.id, {status:"draft", submitted_at:null, supervisor_note: note || "Please review and resubmit."});
+      if(ok){ showToast("Sent back to employee"); overlay.remove(); renderSupervisorView(); }
+    };
+  } else {
+    document.getElementById("tsCloseBtn").onclick = ()=> overlay.remove();
+  }
+}
+
+function exportTimesheetsCSV(all){
+  const rows = [["Employee","Job Title","Employee ID","Project ID","Month","Year","Total Hours","Status","Work Summary","Submitted","Approved"]];
+  all.forEach(h=>{
+    const emp = h.employees || {};
+    rows.push([emp.name||"", emp.role||"", emp.employee_code||"", emp.project_id||"", h.month, h.year, timesheetTotalHours(h), h.status, h.work_summary||"", h.submitted_at||"", h.approved_at||""]);
+  });
+  downloadCSV(`ShanuDT_Timesheets_${todayStr()}.csv`, rows);
+  showToast("Timesheets exported");
 }
 
 let contentSelectedEmpIds = []; // employees currently targeted by the content tab
@@ -809,6 +1216,7 @@ function openEmployeeDetail(empId){
     <div class="modal" style="max-width:700px;">
       <h3>${emp.name}</h3>
       <div class="sub">${emp.email ? emp.email+' &middot; ' : ''}${emp.role} &middot; STEM OPT start ${fmtDate(emp.start_date)} &middot; ${stats.completed}/${stats.total} completed (${stats.pct}%)</div>
+      <div class="sub">Employee ID: ${emp.employee_code || "not assigned"} &middot; Project ID: ${emp.project_id || "not assigned"}</div>
       <table class="log-table">
         <thead><tr><th>#</th><th>Module</th><th>Due</th><th>Status</th><th>Signed off</th><th>Video</th></tr></thead>
         <tbody>
@@ -855,6 +1263,8 @@ function openEmployeeForm(empId){
         <div class="field"><label>${isEdit ? "Reset password" : "Password"}</label><input type="text" id="fPass" placeholder="${isEdit ? 'Leave blank to keep current' : 'Set initial password'}" /></div>
         <div class="field"><label>Job title / role</label><input type="text" id="fRole" value="${isEdit?emp.role:'Java/J2EE Developer'}" /></div>
         <div class="field"><label>STEM OPT start date</label><input type="date" id="fStart" value="${isEdit?emp.start_date:''}" /></div>
+        <div class="field"><label>Employee ID</label><input type="text" id="fEmpCode" value="${isEdit?(emp.employee_code||''):''}" placeholder="e.g. EMP-1042" /></div>
+        <div class="field"><label>Project ID</label><input type="text" id="fProjectId" value="${isEdit?(emp.project_id||''):''}" placeholder="e.g. PRJ-Alpha-7" /></div>
         ${isEdit ? `<div class="field"><label>Status</label><select id="fActive"><option value="true" ${emp.active?'selected':''}>Active</option><option value="false" ${!emp.active?'selected':''}>Inactive</option></select></div>` : ""}
       </div>
       ${isEdit ? `<div class="field" style="margin-top:8px;"><label><input type="checkbox" id="fReset" style="width:auto; margin-right:6px;"/>Reset all training progress (re-generates schedule from start date, clears completions)</label></div>` : ""}
@@ -885,6 +1295,8 @@ function openEmployeeForm(empId){
     const pass = document.getElementById("fPass").value;
     const roleVal = document.getElementById("fRole").value.trim();
     const start = document.getElementById("fStart").value;
+    const empCode = document.getElementById("fEmpCode").value.trim();
+    const projectId = document.getElementById("fProjectId").value.trim();
 
     if(!name || !username || !start || (!isEdit && !pass)){
       showToast("Please fill in all required fields", true); return;
@@ -897,7 +1309,7 @@ function openEmployeeForm(empId){
     saveBtn.disabled = true; saveBtn.textContent = "Saving...";
 
     if(isEdit){
-      const fields = {name, email: email||null, username, role: roleVal, start_date: start, active: document.getElementById("fActive").value === "true"};
+      const fields = {name, email: email||null, username, role: roleVal, start_date: start, active: document.getElementById("fActive").value === "true", employee_code: empCode||null, project_id: projectId||null};
       if(pass) fields.password = pass;
       const ok = await dbUpdateEmployee(emp.id, fields);
       if(ok){
@@ -906,7 +1318,7 @@ function openEmployeeForm(empId){
         showToast("Employee updated"); overlay.remove(); renderSupervisorView();
       } else { saveBtn.disabled=false; saveBtn.textContent="Save changes"; }
     } else {
-      const created = await dbCreateEmployeeWithModules({name, email, username, password:pass, role:roleVal, startDate:start});
+      const created = await dbCreateEmployeeWithModules({name, email, username, password:pass, role:roleVal, startDate:start, employeeCode:empCode, projectId:projectId});
       if(created){ showToast("Employee created"); overlay.remove(); renderSupervisorView(); }
       else { saveBtn.disabled=false; saveBtn.textContent="Create employee"; }
     }
