@@ -113,9 +113,12 @@
   .emp-progress .pct{font-size:12px; color:var(--muted); margin-bottom:4px; display:flex; justify-content:space-between;}
 
   .modal-overlay{position:fixed; inset:0; background:rgba(20,30,50,0.5); display:flex; align-items:center; justify-content:center; z-index:100; padding:20px; overflow-y:auto;}
-  .modal{background:#fff; border-radius:var(--radius-lg); padding:26px; width:100%; max-width:560px; max-height:88vh; overflow-y:auto; position:relative;}
-  .modal-close-btn{position:sticky; top:0; float:right; margin:-10px -10px 0 0; width:32px; height:32px; border-radius:50%; border:none; background:#EEF0F3; color:var(--navy); font-size:18px; line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center; z-index:5;}
+  .modal{background:#fff; border-radius:var(--radius-lg); width:100%; max-width:560px; max-height:88vh; position:relative; display:flex; flex-direction:column; overflow:hidden; padding:0;}
+  .modal-header{display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:26px 26px 0 26px; flex-shrink:0;}
+  .modal-header h3{margin-bottom:0;}
+  .modal-close-btn{flex-shrink:0; width:32px; height:32px; border-radius:50%; border:none; background:#EEF0F3; color:var(--navy); font-size:18px; line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center;}
   .modal-close-btn:hover{background:#E2E6EC;}
+  .modal-body{overflow-y:auto; padding:10px 26px 26px 26px;}
   .modal h3{font-size:17px; font-weight:700; color:var(--navy); margin-bottom:4px;}
   .modal .sub{font-size:13px; color:var(--muted); margin-bottom:18px;}
   .modal-actions{display:flex; gap:10px; margin-top:20px; justify-content:flex-end; flex-wrap:wrap;}
@@ -640,13 +643,17 @@ function openReflectionModal(moduleId){
   overlay.className = "modal-overlay";
   overlay.innerHTML = `
     <div class="modal">
-      <button class="modal-close-btn" id="modalCloseBtn" type="button">&times;</button>
-      <h3>Module ${m.module_index}: ${m.title}</h3>
-      <div class="sub">Briefly describe what you learned and how it applies to your work. This is reviewed by your supervisor as part of your I-983 training record.</div>
-      <div class="field"><label>Reflection / summary</label><textarea id="reflectionText" placeholder="e.g. This module covered... I plan to apply this by..."></textarea></div>
-      <div class="modal-actions">
-        <button class="btn btn-secondary" id="cancelBtn">Cancel</button>
-        <button class="btn btn-primary" id="submitBtn" style="width:auto;">Submit for review</button>
+      <div class="modal-header">
+        <h3>Module ${m.module_index}: ${m.title}</h3>
+        <button class="modal-close-btn" id="modalCloseBtn" type="button">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="sub">Briefly describe what you learned and how it applies to your work. This is reviewed by your supervisor as part of your training record.</div>
+        <div class="field"><label>Reflection / summary</label><textarea id="reflectionText" placeholder="e.g. This module covered... I plan to apply this by..."></textarea></div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" id="cancelBtn">Cancel</button>
+          <button class="btn btn-primary" id="submitBtn" style="width:auto;">Submit for review</button>
+        </div>
       </div>
     </div>
   `;
@@ -1013,31 +1020,39 @@ function openTimesheetReviewModal(h){
   overlay.className = "modal-overlay";
   overlay.innerHTML = `
     <div class="modal" style="max-width:600px;">
-      <button class="modal-close-btn" id="modalCloseBtn" type="button">&times;</button>
-      <h3>${emp.name || "-"} &mdash; ${monthLabel(h.year, h.month)}</h3>
-      <div class="sub">${tsStatusBadge(h.status)}</div>
-      <div class="id-card" style="margin-top:14px;">
-        <div class="item"><div class="k">Job title</div><div class="v">${emp.role || "-"}</div></div>
-        <div class="item"><div class="k">Employee ID</div><div class="v">${emp.employee_code || "-"}</div></div>
-        <div class="item"><div class="k">Project ID</div><div class="v">${emp.project_id || "-"}</div></div>
-        <div class="item"><div class="k">Total hours</div><div class="v">${total}</div></div>
+      <div class="modal-header">
+        <h3>${emp.name || "-"} &mdash; ${monthLabel(h.year, h.month)}</h3>
+        <button class="modal-close-btn" id="modalCloseBtn" type="button">&times;</button>
       </div>
-      <h3 style="margin-top:18px;">Weekly breakdown</h3>
-      <table class="log-table">
-        <thead><tr><th>Week</th><th>Hours</th></tr></thead>
-        <tbody>${weeks.map(w=>`<tr><td>${fmtDate(w.week_start)} &ndash; ${fmtDate(w.week_end)}</td><td>${w.hours}</td></tr>`).join("")}</tbody>
-      </table>
-      <h3 style="margin-top:18px;">Work summary</h3>
-      <div style="font-size:13px; color:var(--text); padding:12px 14px; background:var(--bg); border-radius:8px;">${h.work_summary || "-"}</div>
-      ${canAct ? `
-        <div class="field full" style="margin-top:16px;"><label>Note back to employee (optional, sent if you request changes)</label><textarea id="tsNote" placeholder="e.g. Please double check week of..."></textarea></div>
-        <div class="modal-actions">
-          <button class="btn btn-secondary" id="tsRejectBtn" type="button">Request changes</button>
-          <button class="btn btn-primary" id="tsApproveBtn" type="button" style="width:auto;">Approve</button>
+      <div class="modal-body">
+        <div class="sub">${tsStatusBadge(h.status)}</div>
+        <div class="id-card" style="margin-top:14px;">
+          <div class="item"><div class="k">Job title</div><div class="v">${emp.role || "-"}</div></div>
+          <div class="item"><div class="k">Employee ID</div><div class="v">${emp.employee_code || "-"}</div></div>
+          <div class="item"><div class="k">Project ID</div><div class="v">${emp.project_id || "-"}</div></div>
+          <div class="item"><div class="k">Total hours</div><div class="v">${total}</div></div>
         </div>
-      ` : `
-        <div class="modal-actions"><button class="btn btn-primary" id="tsCloseBtn" type="button" style="width:auto;">Close</button></div>
-      `}
+        <h3 style="margin-top:18px;">Weekly breakdown</h3>
+        <table class="log-table">
+          <thead><tr><th>Week</th><th>Hours</th></tr></thead>
+          <tbody>${weeks.map(w=>`<tr><td>${fmtDate(w.week_start)} &ndash; ${fmtDate(w.week_end)}</td><td>${w.hours}</td></tr>`).join("")}</tbody>
+        </table>
+        <h3 style="margin-top:18px;">Work summary</h3>
+        <div style="font-size:13px; color:var(--text); padding:12px 14px; background:var(--bg); border-radius:8px;">${h.work_summary || "-"}</div>
+        ${h.supervisor_note ? `
+          <h3 style="margin-top:18px;">Supervisor note</h3>
+          <div style="font-size:13px; color:var(--text); padding:12px 14px; background:var(--amber-bg); border-left:3px solid var(--amber); border-radius:8px;">${h.supervisor_note}</div>
+        ` : ""}
+        ${canAct ? `
+          <div class="field full" style="margin-top:16px;"><label>Note back to employee (optional, sent if you request changes)</label><textarea id="tsNote" placeholder="e.g. Please double check week of..."></textarea></div>
+          <div class="modal-actions">
+            <button class="btn btn-secondary" id="tsRejectBtn" type="button">Request changes</button>
+            <button class="btn btn-primary" id="tsApproveBtn" type="button" style="width:auto;">Approve</button>
+          </div>
+        ` : `
+          <div class="modal-actions"><button class="btn btn-primary" id="tsCloseBtn" type="button" style="width:auto;">Close</button></div>
+        `}
+      </div>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -1046,7 +1061,7 @@ function openTimesheetReviewModal(h){
 
   if(canAct){
     document.getElementById("tsApproveBtn").onclick = async ()=>{
-      const ok = await dbUpdateTimesheet(h.id, {status:"approved", approved_at: new Date().toISOString(), supervisor_note: null});
+      const ok = await dbUpdateTimesheet(h.id, {status:"approved", approved_at: new Date().toISOString()});
       if(ok){ showToast("Timesheet approved"); overlay.remove(); renderSupervisorView(); }
     };
     document.getElementById("tsRejectBtn").onclick = async ()=>{
@@ -1182,14 +1197,18 @@ function openModuleEditor(moduleIndex, title, link){
   overlay.className = "modal-overlay";
   overlay.innerHTML = `
     <div class="modal">
-      <button class="modal-close-btn" id="modalCloseBtn" type="button">&times;</button>
-      <h3>Module ${moduleIndex}</h3>
-      <div class="sub">Changes apply to ${contentSelectedEmpIds.length} selected employee(s).</div>
-      <div class="field"><label>Module title</label><input type="text" id="editTitleInput" value="${title.replace(/&quot;/g,'"')}" /></div>
-      <div class="field"><label>Video URL</label><input type="text" id="editLinkInput" value="${link.replace(/&quot;/g,'"')}" placeholder="https://..." /></div>
-      <div class="modal-actions">
-        <button class="btn btn-secondary" id="cancelBtn">Cancel</button>
-        <button class="btn btn-primary" id="saveBtn" style="width:auto;">Save changes</button>
+      <div class="modal-header">
+        <h3>Module ${moduleIndex}</h3>
+        <button class="modal-close-btn" id="modalCloseBtn" type="button">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="sub">Changes apply to ${contentSelectedEmpIds.length} selected employee(s).</div>
+        <div class="field"><label>Module title</label><input type="text" id="editTitleInput" value="${title.replace(/&quot;/g,'"')}" /></div>
+        <div class="field"><label>Video URL</label><input type="text" id="editLinkInput" value="${link.replace(/&quot;/g,'"')}" placeholder="https://..." /></div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" id="cancelBtn">Cancel</button>
+          <button class="btn btn-primary" id="saveBtn" style="width:auto;">Save changes</button>
+        </div>
       </div>
     </div>
   `;
@@ -1237,31 +1256,35 @@ function openEmployeeDetail(empId){
   overlay.className = "modal-overlay";
   overlay.innerHTML = `
     <div class="modal" style="max-width:700px;">
-      <button class="modal-close-btn" id="modalCloseBtn" type="button">&times;</button>
-      <h3>${emp.name}</h3>
-      <div class="sub">${emp.email ? emp.email+' &middot; ' : ''}${emp.role} &middot; Start date ${fmtDate(emp.start_date)} &middot; ${stats.completed}/${stats.total} completed (${stats.pct}%)</div>
-      <div class="sub">Employee ID: ${emp.employee_code || "not assigned"} &middot; Project ID: ${emp.project_id || "not assigned"}</div>
-      <table class="log-table">
-        <thead><tr><th>#</th><th>Module</th><th>Due</th><th>Status</th><th>Signed off</th><th>Video</th></tr></thead>
-        <tbody>
-          ${emp.modules.map(m=>`<tr><td>${m.module_index}</td><td>${m.title}</td><td>${fmtDate(m.due_date)}</td><td>${moduleStatusBadge(m)}</td><td>${m.signoff_date ? fmtDate(m.signoff_date) : "-"}</td><td>${m.video_url ? `<a href="${m.video_url}" target="_blank" rel="noopener noreferrer">Link</a>` : '-'}</td></tr>`).join("")}
-        </tbody>
-      </table>
-      ${withReflections.length>0 ? `
-        <h3 style="margin-top:22px;">Submitted summaries (${withReflections.length})</h3>
-        <div>
-          ${withReflections.map(m=>`
-            <div style="margin-bottom:12px; padding:12px 14px; background:var(--bg); border-radius:8px; border-left:3px solid var(--accent);">
-              <div style="font-size:12px; font-weight:700; color:var(--navy); margin-bottom:4px;">Module ${m.module_index}: ${m.title}</div>
-              <div style="font-size:11px; color:var(--muted); margin-bottom:6px;">Submitted ${fmtDate(m.completed_date)}${m.signoff_date ? ' &middot; Signed off '+fmtDate(m.signoff_date) : ' &middot; Awaiting sign-off'}</div>
-              <div style="font-size:13px; color:var(--text);">${m.reflection}</div>
-            </div>
-          `).join("")}
+      <div class="modal-header">
+        <h3>${emp.name}</h3>
+        <button class="modal-close-btn" id="modalCloseBtn" type="button">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="sub">${emp.email ? emp.email+' &middot; ' : ''}${emp.role} &middot; Start date ${fmtDate(emp.start_date)} &middot; ${stats.completed}/${stats.total} completed (${stats.pct}%)</div>
+        <div class="sub">Employee ID: ${emp.employee_code || "not assigned"} &middot; Project ID: ${emp.project_id || "not assigned"}</div>
+        <table class="log-table">
+          <thead><tr><th>#</th><th>Module</th><th>Due</th><th>Status</th><th>Signed off</th><th>Video</th></tr></thead>
+          <tbody>
+            ${emp.modules.map(m=>`<tr><td>${m.module_index}</td><td>${m.title}</td><td>${fmtDate(m.due_date)}</td><td>${moduleStatusBadge(m)}</td><td>${m.signoff_date ? fmtDate(m.signoff_date) : "-"}</td><td>${m.video_url ? `<a href="${m.video_url}" target="_blank" rel="noopener noreferrer">Link</a>` : '-'}</td></tr>`).join("")}
+          </tbody>
+        </table>
+        ${withReflections.length>0 ? `
+          <h3 style="margin-top:22px;">Submitted summaries (${withReflections.length})</h3>
+          <div>
+            ${withReflections.map(m=>`
+              <div style="margin-bottom:12px; padding:12px 14px; background:var(--bg); border-radius:8px; border-left:3px solid var(--accent);">
+                <div style="font-size:12px; font-weight:700; color:var(--navy); margin-bottom:4px;">Module ${m.module_index}: ${m.title}</div>
+                <div style="font-size:11px; color:var(--muted); margin-bottom:6px;">Submitted ${fmtDate(m.completed_date)}${m.signoff_date ? ' &middot; Signed off '+fmtDate(m.signoff_date) : ' &middot; Awaiting sign-off'}</div>
+                <div style="font-size:13px; color:var(--text);">${m.reflection}</div>
+              </div>
+            `).join("")}
+          </div>
+        ` : ""}
+        <div class="modal-actions">
+          <button class="btn btn-secondary" id="exportEmpBtn">Export transcript (CSV)</button>
+          <button class="btn btn-primary" id="closeBtn" style="width:auto;">Close</button>
         </div>
-      ` : ""}
-      <div class="modal-actions">
-        <button class="btn btn-secondary" id="exportEmpBtn">Export transcript (CSV)</button>
-        <button class="btn btn-primary" id="closeBtn" style="width:auto;">Close</button>
       </div>
     </div>
   `;
@@ -1280,27 +1303,31 @@ function openEmployeeForm(empId){
   overlay.className = "modal-overlay";
   overlay.innerHTML = `
     <div class="modal">
-      <button class="modal-close-btn" id="modalCloseBtn" type="button">&times;</button>
-      <h3>${isEdit ? "Edit employee" : "Add new employee"}</h3>
-      <div class="sub">${isEdit ? "Update profile details, reset their password, or deactivate them." : "Creates a profile, with the option to assign the 40-module training curriculum."}</div>
-      <div class="form-grid">
-        <div class="field full"><label>Full name</label><input type="text" id="fName" value="${isEdit?emp.name:''}" placeholder="e.g. Priya Sharma" /></div>
-        <div class="field full"><label>Email address</label><input type="email" id="fEmail" value="${isEdit?(emp.email||''):''}" placeholder="e.g. priya.sharma@example.com" /></div>
-        <div class="field"><label>Username (for login)</label><input type="text" id="fUser" value="${isEdit?emp.username:''}" placeholder="e.g. psharma" /></div>
-        <div class="field"><label>${isEdit ? "Reset password" : "Password"}</label><input type="text" id="fPass" placeholder="${isEdit ? 'Leave blank to keep current' : 'Set initial password'}" /></div>
-        <div class="field"><label>Job title / role</label><input type="text" id="fRole" value="${isEdit?emp.role:'Java/J2EE Developer'}" /></div>
-        <div class="field"><label>Start date</label><input type="date" id="fStart" value="${isEdit?emp.start_date:''}" /></div>
-        <div class="field"><label>Employee ID</label><input type="text" id="fEmpCode" value="${isEdit?(emp.employee_code||''):''}" placeholder="e.g. EMP-1042" /></div>
-        <div class="field"><label>Project ID</label><input type="text" id="fProjectId" value="${isEdit?(emp.project_id||''):''}" placeholder="e.g. PRJ-Alpha-7" /></div>
-        ${isEdit ? `<div class="field"><label>Status</label><select id="fActive"><option value="true" ${emp.active?'selected':''}>Active</option><option value="false" ${!emp.active?'selected':''}>Inactive</option></select></div>` : ""}
+      <div class="modal-header">
+        <h3>${isEdit ? "Edit employee" : "Add new employee"}</h3>
+        <button class="modal-close-btn" id="modalCloseBtn" type="button">&times;</button>
       </div>
-      ${!isEdit ? `<div class="field" style="margin-top:8px;"><label><input type="checkbox" id="fAssignModules" checked style="width:auto; margin-right:6px;"/>Assign the 40-module training curriculum (based on start date)</label></div>` : ""}
-      ${isEdit ? `<div class="field" style="margin-top:8px;"><label><input type="checkbox" id="fReset" style="width:auto; margin-right:6px;"/>Reset all training progress (re-generates schedule from start date, clears completions)</label></div>` : ""}
-      <div class="modal-actions" style="justify-content:space-between;">
-        <div>${isEdit ? `<button class="btn btn-danger btn-sm" id="deleteBtn" type="button">Delete employee</button>` : ""}</div>
-        <div style="display:flex; gap:10px;">
-          <button class="btn btn-secondary" id="cancelBtn" type="button">Cancel</button>
-          <button class="btn btn-primary" id="saveBtn" style="width:auto;" type="button">${isEdit?"Save changes":"Create employee"}</button>
+      <div class="modal-body">
+        <div class="sub">${isEdit ? "Update profile details, reset their password, or deactivate them." : "Creates a profile, with the option to assign the 40-module training curriculum."}</div>
+        <div class="form-grid">
+          <div class="field full"><label>Full name</label><input type="text" id="fName" value="${isEdit?emp.name:''}" placeholder="e.g. Priya Sharma" /></div>
+          <div class="field full"><label>Email address</label><input type="email" id="fEmail" value="${isEdit?(emp.email||''):''}" placeholder="e.g. priya.sharma@example.com" /></div>
+          <div class="field"><label>Username (for login)</label><input type="text" id="fUser" value="${isEdit?emp.username:''}" placeholder="e.g. psharma" /></div>
+          <div class="field"><label>${isEdit ? "Reset password" : "Password"}</label><input type="text" id="fPass" placeholder="${isEdit ? 'Leave blank to keep current' : 'Set initial password'}" /></div>
+          <div class="field"><label>Job title / role</label><input type="text" id="fRole" value="${isEdit?emp.role:'Java/J2EE Developer'}" /></div>
+          <div class="field"><label>Start date</label><input type="date" id="fStart" value="${isEdit?emp.start_date:''}" /></div>
+          <div class="field"><label>Employee ID</label><input type="text" id="fEmpCode" value="${isEdit?(emp.employee_code||''):''}" placeholder="e.g. EMP-1042" /></div>
+          <div class="field"><label>Project ID</label><input type="text" id="fProjectId" value="${isEdit?(emp.project_id||''):''}" placeholder="e.g. PRJ-Alpha-7" /></div>
+          ${isEdit ? `<div class="field"><label>Status</label><select id="fActive"><option value="true" ${emp.active?'selected':''}>Active</option><option value="false" ${!emp.active?'selected':''}>Inactive</option></select></div>` : ""}
+        </div>
+        ${!isEdit ? `<div class="field" style="margin-top:8px;"><label><input type="checkbox" id="fAssignModules" checked style="width:auto; margin-right:6px;"/>Assign the 40-module training curriculum (based on start date)</label></div>` : ""}
+        ${isEdit ? `<div class="field" style="margin-top:8px;"><label><input type="checkbox" id="fReset" style="width:auto; margin-right:6px;"/>Reset all training progress (re-generates schedule from start date, clears completions)</label></div>` : ""}
+        <div class="modal-actions" style="justify-content:space-between;">
+          <div>${isEdit ? `<button class="btn btn-danger btn-sm" id="deleteBtn" type="button">Delete employee</button>` : ""}</div>
+          <div style="display:flex; gap:10px;">
+            <button class="btn btn-secondary" id="cancelBtn" type="button">Cancel</button>
+            <button class="btn btn-primary" id="saveBtn" style="width:auto;" type="button">${isEdit?"Save changes":"Create employee"}</button>
+          </div>
         </div>
       </div>
     </div>
