@@ -1039,12 +1039,12 @@ function openTimesheetReviewModal(h){
         </table>
         <h3 style="margin-top:18px;">Work summary</h3>
         <div style="font-size:13px; color:var(--text); padding:12px 14px; background:var(--bg); border-radius:8px;">${h.work_summary || "-"}</div>
-        ${h.supervisor_note ? `
+        ${(h.supervisor_note && !canAct) ? `
           <h3 style="margin-top:18px;">Supervisor note</h3>
           <div style="font-size:13px; color:var(--text); padding:12px 14px; background:var(--amber-bg); border-left:3px solid var(--amber); border-radius:8px;">${h.supervisor_note}</div>
         ` : ""}
         ${canAct ? `
-          <div class="field full" style="margin-top:16px;"><label>Note back to employee (optional, sent if you request changes)</label><textarea id="tsNote" placeholder="e.g. Please double check week of..."></textarea></div>
+          <div class="field full" style="margin-top:16px;"><label>Note to employee (optional)</label><textarea id="tsNote" placeholder="e.g. Great work this month / Please double check week of...">${h.supervisor_note || ""}</textarea></div>
           <div class="modal-actions">
             <button class="btn btn-secondary" id="tsRejectBtn" type="button">Request changes</button>
             <button class="btn btn-primary" id="tsApproveBtn" type="button" style="width:auto;">Approve</button>
@@ -1061,7 +1061,8 @@ function openTimesheetReviewModal(h){
 
   if(canAct){
     document.getElementById("tsApproveBtn").onclick = async ()=>{
-      const ok = await dbUpdateTimesheet(h.id, {status:"approved", approved_at: new Date().toISOString()});
+      const note = document.getElementById("tsNote").value.trim();
+      const ok = await dbUpdateTimesheet(h.id, {status:"approved", approved_at: new Date().toISOString(), supervisor_note: note || null});
       if(ok){ showToast("Timesheet approved"); overlay.remove(); renderSupervisorView(); }
     };
     document.getElementById("tsRejectBtn").onclick = async ()=>{
