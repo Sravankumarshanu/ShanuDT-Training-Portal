@@ -102,6 +102,30 @@
   .ts-history-row{display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--border); font-size:13px;}
   .ts-history-row:last-child{border-bottom:none;}
   .ts-history-row .link{color:var(--accent); font-weight:600; background:none; border:none; cursor:pointer; font-size:13px; padding:0;}
+  .timeoff-cals{display:flex; gap:18px; flex-wrap:wrap;}
+  .to-cal{flex:1; min-width:220px;}
+  .to-cal-title{font-size:13px; font-weight:700; color:var(--navy); text-align:center; margin-bottom:8px;}
+  .to-grid{display:grid; grid-template-columns:repeat(7,1fr); gap:3px;}
+  .to-head div{text-align:center; font-size:11px; color:var(--muted); font-weight:600; padding:2px 0;}
+  .to-cell{aspect-ratio:1; display:flex; align-items:center; justify-content:center; font-size:12px; border-radius:6px; background:#F4F6F8; cursor:default; user-select:none;}
+  .to-cell[data-click="1"]{cursor:pointer;}
+  .to-cell[data-click="1"]:hover{background:#E2E6EC;}
+  .to-empty{background:transparent;}
+  .to-disabled{color:#C4CAD2; background:transparent;}
+  .to-picked{background:#C0392B !important; color:#fff !important;}
+  .to-pending{background:#E8A93C; color:#fff;}
+  .to-approved{background:var(--green); color:#fff;}
+  .to-denied{background:#D8DCE2; color:var(--muted); text-decoration:line-through;}
+  .to-swatch{display:inline-block; width:12px; height:12px; border-radius:3px; vertical-align:middle; margin-right:4px;}
+  .to-swatch.to-pending{background:#E8A93C;}
+  .to-swatch.to-approved{background:var(--green);}
+  .to-swatch.to-denied{background:#D8DCE2;}
+  .to-swatch.to-picked{background:#C0392B;}
+  .emp-ts-group{border:1px solid var(--border); border-radius:10px; margin-bottom:10px; overflow:hidden;}
+  .emp-ts-toggle{width:100%; display:flex; justify-content:space-between; align-items:center; padding:14px 16px; background:#fff; border:none; cursor:pointer; font-size:14px; color:var(--text); text-align:left;}
+  .emp-ts-toggle:hover{background:var(--bg);}
+  .emp-ts-toggle .chev{color:var(--muted); font-size:12px;}
+  .emp-ts-body{padding:0 16px 12px 16px;}
 
   .emp-card{background:var(--card); border:1px solid var(--border); border-radius:var(--radius-lg); padding:18px 20px; margin-bottom:14px; display:flex; align-items:center; gap:16px; flex-wrap:wrap;}
   .emp-card .clickzone{display:flex; align-items:center; gap:16px; flex:1; cursor:pointer; min-width:240px;}
@@ -477,6 +501,60 @@ async function applyAutoFutureCompliance(newEmployeeId){
   }
 }
 
+// ---------- Time off (vacation) data layer ----------
+async function dbGetTimeoffForEmployee(employeeId){
+  const {data, error} = await sb.from("timeoff_requests").select("*").eq("employee_id", employeeId).order("submitted_at",{ascending:false});
+  if(error){ console.error(error); return []; }
+  return data || [];
+}
+async function dbGetPendingTimeoff(){
+  const {data, error} = await sb.from("timeoff_requests").select("*, employees(id,name,role)").eq("status","pending").order("submitted_at",{ascending:true});
+  if(error){ console.error(error); return []; }
+  return data || [];
+}
+async function dbGetAllTimeoff(){
+  const {data, error} = await sb.from("timeoff_requests").select("*, employees(id,name,role)").order("submitted_at",{ascending:false});
+  if(error){ console.error(error); return []; }
+  return data || [];
+}
+async function dbCreateTimeoff(employeeId, category, reason, dates){
+  const {data, error} = await sb.from("timeoff_requests").insert({
+    employee_id: employeeId, category, reason: reason||null, dates, status:"pending"
+  }).select().single();
+  if(error){ console.error(error); showToast("Failed to submit request", true); return null; }
+  return data;
+}
+async function dbDecideTimeoff(id, status, note){
+  const {error} = await sb.from("timeoff_requests").update({status, supervisor_note: note||null, decided_at: new Date().toISOString()}).eq("id", id);
+  if(error){ console.error(error); showToast("Failed to update request", true); return false; }
+  return true;
+}
+async function dbDeleteTimeoff(id){
+  const {error} = await sb.from("timeoff_requests").delete().eq("id", id);
+  if(error){ console.error(error); showToast("Failed to cancel request", true); return false; }
+  return true;
+}
+// Given a list of timeoff requests, build a map of date -> status for calendar coloring
+function buildTimeoffDateMap(requests){
+  const map = {};
+  requests.forEach(r=>{
+    (r.dates||[]).forEach(d=>{
+      // approved wins over pending wins over denied for display
+      const rank = {denied:0, pending:1, approved:2};
+      if(!map[d] || rank[r.status] > rank[map[d].status]){
+        map[d] = {status: r.status, category: r.category, requestId: r.id};
+      }
+    });
+  });
+  return map;
+}
+
+// Only show/allow weeks whose range includes days on/after the employee's start date.
+function weekAllowedForStart(week, startDate){
+  if(!startDate) return true;
+  return week.week_end >= startDate; // any part of the week is on/after start
+}
+
 async function loadEmployeesWithModules(){
   const emps = await dbGetAllEmployees();
   const full = [];
@@ -808,12 +886,22 @@ async function renderEmployeeTimesheetsTab(content, emp){
     return;
   }
 
-  const weeks = mondaysInMonth(TS_VIEW_YEAR, TS_VIEW_MONTH);
+  const allWeeks = mondaysInMonth(TS_VIEW_YEAR, TS_VIEW_MONTH);
+  const weeks = allWeeks.filter(w=> weekAllowedForStart(w, emp.start_date));
   const weekHoursMap = {};
   (ts.timesheet_weeks||[]).forEach(w=> weekHoursMap[w.week_start] = w.hours);
   const total = weeks.reduce((s,w)=> s + (parseFloat(weekHoursMap[w.week_start])||0), 0);
   const isLocked = ts.status === "approved";
   const idMissing = !emp.project_id || !emp.employee_code;
+
+  // Start-date boundaries for month navigation
+  let startY = null, startM = null;
+  if(emp.start_date){
+    const sd = new Date(emp.start_date + "T00:00:00");
+    startY = sd.getFullYear(); startM = sd.getMonth()+1;
+  }
+  const atStartMonth = startY !== null && TS_VIEW_YEAR === startY && TS_VIEW_MONTH === startM;
+  const beforeStartMonth = startY !== null && (TS_VIEW_YEAR < startY || (TS_VIEW_YEAR === startY && TS_VIEW_MONTH < startM));
 
   content.innerHTML = `
     <div class="card">
@@ -829,31 +917,35 @@ async function renderEmployeeTimesheetsTab(content, emp){
 
     <div class="card">
       <div class="month-nav">
-        <button class="btn btn-secondary btn-sm" id="tsPrev" type="button">&larr;</button>
+        <button class="btn btn-secondary btn-sm" id="tsPrev" type="button" ${atStartMonth?"disabled style='opacity:.4; cursor:not-allowed;'":""}>&larr;</button>
         <div class="mtitle">${monthLabel(TS_VIEW_YEAR, TS_VIEW_MONTH)}</div>
         <button class="btn btn-secondary btn-sm" id="tsNext" type="button">&rarr;</button>
-        <span style="margin-left:auto;">${tsStatusBadge(ts.status)}</span>
+        <span style="margin-left:auto;">${beforeStartMonth ? "" : tsStatusBadge(ts.status)}</span>
       </div>
       ${ts.supervisor_note ? `<div style="margin:10px 0; padding:10px 12px; background:var(--amber-bg); border-radius:8px; font-size:13px; color:var(--text); border-left:3px solid var(--amber);"><strong style="font-size:11px; text-transform:uppercase; color:var(--amber);">Note from supervisor</strong><br/>${ts.supervisor_note}</div>` : ""}
 
-      <h3 style="margin-top:14px;">Weekly hours</h3>
-      <div id="weekList"></div>
-      <div class="ts-total">Total for month: <strong>${total}</strong> hours</div>
-
-      <div class="field full" style="margin-top:16px;">
-        <label>What did you work on this month?</label>
-        <textarea id="workSummary" placeholder="Describe the work you completed this month..." ${isLocked?"disabled":""}>${ts.work_summary || ""}</textarea>
-      </div>
-
-      ${isLocked ? `
-        <div style="margin-top:10px; padding:12px 14px; background:var(--green-bg); border-radius:8px; font-size:13px; color:var(--green); font-weight:600;">
-          &#10003; Approved${ts.approved_at ? " on "+fmtDate(ts.approved_at.slice(0,10)) : ""}. This timesheet is locked.
-        </div>
+      ${beforeStartMonth ? `
+        <div class="empty" style="padding:24px 10px;">This month is before your start date (${fmtDate(emp.start_date)}). You can only log hours from your start date onward.</div>
       ` : `
-        <div class="modal-actions" style="justify-content:flex-end; margin-top:16px;">
-          <button class="btn btn-secondary" id="tsSaveBtn" type="button" style="width:auto;">Save</button>
-          <button class="btn btn-primary" id="tsSubmitBtn" type="button" style="width:auto;">${ts.status==="submitted" ? "Update submission" : "Submit for approval"}</button>
+        <h3 style="margin-top:14px;">Weekly hours</h3>
+        <div id="weekList"></div>
+        <div class="ts-total">Total for month: <strong>${total}</strong> hours</div>
+
+        <div class="field full" style="margin-top:16px;">
+          <label>What did you work on this month?</label>
+          <textarea id="workSummary" placeholder="Describe the work you completed this month..." ${isLocked?"disabled":""}>${ts.work_summary || ""}</textarea>
         </div>
+
+        ${isLocked ? `
+          <div style="margin-top:10px; padding:12px 14px; background:var(--green-bg); border-radius:8px; font-size:13px; color:var(--green); font-weight:600;">
+            &#10003; Approved${ts.approved_at ? " on "+fmtDate(ts.approved_at.slice(0,10)) : ""}. This timesheet is locked.
+          </div>
+        ` : `
+          <div class="modal-actions" style="justify-content:flex-end; margin-top:16px;">
+            <button class="btn btn-secondary" id="tsSaveBtn" type="button" style="width:auto;">Save</button>
+            <button class="btn btn-primary" id="tsSubmitBtn" type="button" style="width:auto;">${ts.status==="submitted" ? "Update submission" : "Submit for approval"}</button>
+          </div>
+        `}
       `}
     </div>
 
@@ -861,27 +953,38 @@ async function renderEmployeeTimesheetsTab(content, emp){
       <h3>History</h3>
       <div id="tsHistory"></div>
     </div>
+
+    <div class="card" id="timeoffCard">
+      <h3>Time Off</h3>
+      <p style="font-size:13px; color:var(--muted); margin-bottom:12px;">Click the days you'd like to take off, choose a category and add a reason, then submit for approval. Selected days stay red until approved (then green).</p>
+      <div id="timeoffContent"></div>
+    </div>
   `;
 
   const weekList = document.getElementById("weekList");
-  weeks.forEach(w=>{
-    const row = document.createElement("div");
-    row.className = "week-row";
-    row.innerHTML = `
-      <div class="wlabel">Week of ${fmtDate(w.week_start)} &ndash; ${fmtDate(w.week_end)}</div>
-      <input type="number" min="0" max="168" step="0.25" data-week="${w.week_start}" value="${weekHoursMap[w.week_start] ?? ""}" placeholder="0" ${isLocked?"disabled":""} />
-    `;
-    weekList.appendChild(row);
-  });
-  weekList.querySelectorAll("input[data-week]").forEach(inp=>{
-    inp.oninput = ()=>{
-      const t = weeks.reduce((s,w)=>{
-        const el = weekList.querySelector(`input[data-week="${w.week_start}"]`);
-        return s + (parseFloat(el.value)||0);
-      },0);
-      content.querySelector(".ts-total strong").textContent = t;
-    };
-  });
+  if(weekList){
+    weeks.forEach(w=>{
+      // If the start date falls inside this week, show the effective start
+      const effectiveStart = (emp.start_date && emp.start_date > w.week_start) ? emp.start_date : w.week_start;
+      const partial = effectiveStart !== w.week_start;
+      const row = document.createElement("div");
+      row.className = "week-row";
+      row.innerHTML = `
+        <div class="wlabel">Week of ${fmtDate(effectiveStart)} &ndash; ${fmtDate(w.week_end)}${partial ? ` <span style="color:var(--muted); font-size:11px;">(from start date)</span>` : ""}</div>
+        <input type="number" min="0" max="168" step="0.25" data-week="${w.week_start}" value="${weekHoursMap[w.week_start] ?? ""}" placeholder="0" ${isLocked?"disabled":""} />
+      `;
+      weekList.appendChild(row);
+    });
+    weekList.querySelectorAll("input[data-week]").forEach(inp=>{
+      inp.oninput = ()=>{
+        const t = weeks.reduce((s,w)=>{
+          const el = weekList.querySelector(`input[data-week="${w.week_start}"]`);
+          return s + (parseFloat(el.value)||0);
+        },0);
+        content.querySelector(".ts-total strong").textContent = t;
+      };
+    });
+  }
 
   const histEl = document.getElementById("tsHistory");
   if(history.length===0){
@@ -903,6 +1006,7 @@ async function renderEmployeeTimesheetsTab(content, emp){
   }
 
   document.getElementById("tsPrev").onclick = ()=>{
+    if(atStartMonth) return;
     TS_VIEW_MONTH--; if(TS_VIEW_MONTH<1){ TS_VIEW_MONTH=12; TS_VIEW_YEAR--; }
     renderEmployeeView();
   };
@@ -911,7 +1015,7 @@ async function renderEmployeeTimesheetsTab(content, emp){
     renderEmployeeView();
   };
 
-  if(!isLocked){
+  if(!isLocked && !beforeStartMonth){
     async function collectAndSave(){
       const weekRows = weeks.map(w=>({
         week_start: w.week_start, week_end: w.week_end,
@@ -962,6 +1066,141 @@ async function renderEmployeeTimesheetsTab(content, emp){
       renderEmployeeView();
     };
   }
+
+  await renderEmployeeTimeoffSection(emp);
+}
+
+// ---------- Employee: Time Off calendar section ----------
+async function renderEmployeeTimeoffSection(emp){
+  const el = document.getElementById("timeoffContent");
+  if(!el) return;
+  const requests = await dbGetTimeoffForEmployee(emp.id);
+  const dateMap = buildTimeoffDateMap(requests);
+
+  // 3 months: current + next 2
+  const base = new Date();
+  base.setDate(1);
+  const months = [];
+  for(let i=0;i<3;i++){
+    months.push({year: base.getFullYear(), month: base.getMonth()+1});
+    base.setMonth(base.getMonth()+1);
+  }
+
+  const todayS = todayStr();
+  const startDate = emp.start_date || null;
+  const selected = new Set(); // newly-clicked pending selections (this session)
+
+  el.innerHTML = `
+    <div class="timeoff-cals" id="timeoffCals"></div>
+    <div style="display:flex; gap:16px; flex-wrap:wrap; font-size:12px; color:var(--muted); margin:12px 0;">
+      <span><span class="to-swatch to-pending"></span> Pending</span>
+      <span><span class="to-swatch to-approved"></span> Approved</span>
+      <span><span class="to-swatch to-denied"></span> Denied</span>
+      <span><span class="to-swatch to-picked"></span> New selection</span>
+    </div>
+    <div class="form-grid">
+      <div class="field"><label>Category</label><select id="toCategory"><option>Vacation</option><option>Sick</option><option>Personal</option></select></div>
+      <div class="field full"><label>Reason</label><textarea id="toReason" placeholder="Briefly describe your time-off request..."></textarea></div>
+    </div>
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+      <div style="font-size:13px; color:var(--muted);"><span id="toCount">0</span> day(s) selected</div>
+      <button class="btn btn-primary btn-sm" id="toSubmitBtn" type="button" style="width:auto;">Submit request</button>
+    </div>
+    ${requests.length>0 ? `<div style="margin-top:18px;"><h3 style="font-size:14px;">Your requests</h3><div id="toRequests"></div></div>` : ""}
+  `;
+
+  const calsEl = document.getElementById("timeoffCals");
+  months.forEach(m=>{
+    calsEl.appendChild(buildMonthCalendar(m.year, m.month, {dateMap, selected, todayS, startDate, onChange: updateCount}));
+  });
+
+  function updateCount(){
+    document.getElementById("toCount").textContent = selected.size;
+  }
+
+  // Render existing requests list
+  const reqEl = document.getElementById("toRequests");
+  if(reqEl){
+    requests.forEach(r=>{
+      const row = document.createElement("div");
+      row.className = "ts-history-row";
+      const badge = r.status==="approved" ? `<span class="badge approved">Approved</span>`
+        : r.status==="denied" ? `<span class="badge" style="background:var(--red-bg); color:var(--red);">Denied</span>`
+        : `<span class="badge submitted">Pending</span>`;
+      const dayCount = (r.dates||[]).length;
+      row.innerHTML = `
+        <span>${r.category} &middot; ${dayCount} day(s)${r.reason?` &middot; ${r.reason}`:""}${r.supervisor_note?`<br/><span style="font-size:11px; color:var(--muted);">Note: ${r.supervisor_note}</span>`:""}</span>
+        <span style="display:flex; align-items:center; gap:10px;">${badge}${r.status==="pending"?`<button class="link" data-cancel="${r.id}" type="button">Cancel</button>`:""}</span>
+      `;
+      reqEl.appendChild(row);
+    });
+    reqEl.querySelectorAll("button[data-cancel]").forEach(b=>{
+      b.onclick = async ()=>{
+        if(!confirm("Cancel this pending time-off request?")) return;
+        const ok = await dbDeleteTimeoff(b.dataset.cancel);
+        if(ok){ showToast("Request cancelled"); renderEmployeeView(); }
+      };
+    });
+  }
+
+  document.getElementById("toSubmitBtn").onclick = async ()=>{
+    if(selected.size === 0){ showToast("Click at least one day on the calendar", true); return; }
+    const category = document.getElementById("toCategory").value;
+    const reason = document.getElementById("toReason").value.trim();
+    if(reason.length < 3){ showToast("Please add a brief reason", true); return; }
+    const btn = document.getElementById("toSubmitBtn");
+    btn.disabled = true; btn.textContent = "Submitting...";
+    const dates = Array.from(selected).sort();
+    const ok = await dbCreateTimeoff(emp.id, category, reason, dates);
+    if(ok){ showToast("Time-off request submitted"); renderEmployeeView(); }
+    else { btn.disabled = false; btn.textContent = "Submit request"; }
+  };
+}
+
+// Build a clickable month calendar element
+function buildMonthCalendar(year, month, opts){
+  const {dateMap={}, selected=new Set(), todayS, startDate, onChange, readOnly=false} = opts || {};
+  const wrap = document.createElement("div");
+  wrap.className = "to-cal";
+  const first = new Date(year, month-1, 1);
+  const startDay = (first.getDay()+6)%7; // Monday=0
+  const daysInMonth = new Date(year, month, 0).getDate();
+
+  let cells = "";
+  for(let i=0;i<startDay;i++) cells += `<div class="to-cell to-empty"></div>`;
+  for(let d=1; d<=daysInMonth; d++){
+    const ds = `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const existing = dateMap[ds];
+    const beforeStart = startDate && ds < startDate;
+    const past = ds < todayS;
+    let cls = "to-cell";
+    let clickable = !readOnly && !beforeStart && !past;
+    if(existing){
+      cls += existing.status==="approved" ? " to-approved" : existing.status==="denied" ? " to-denied" : " to-pending";
+      clickable = false; // already part of a request
+    }
+    if(beforeStart || past) cls += " to-disabled";
+    cells += `<div class="${cls}" data-date="${ds}" ${clickable?'data-click="1"':''}>${d}</div>`;
+  }
+
+  wrap.innerHTML = `
+    <div class="to-cal-title">${monthLabel(year, month)}</div>
+    <div class="to-grid to-head">
+      <div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div><div>S</div>
+    </div>
+    <div class="to-grid to-body">${cells}</div>
+  `;
+
+  wrap.querySelectorAll('[data-click="1"]').forEach(cell=>{
+    cell.onclick = ()=>{
+      const ds = cell.dataset.date;
+      if(selected.has(ds)){ selected.delete(ds); cell.classList.remove("to-picked"); }
+      else { selected.add(ds); cell.classList.add("to-picked"); }
+      if(onChange) onChange();
+    };
+  });
+
+  return wrap;
 }
 
 function tsStatusBadge(status){
@@ -986,6 +1225,7 @@ async function renderSupervisorView(){
         <button class="tab ${activeTab==='overview'?'active':''}" data-tab="overview">Employees</button>
         <button class="tab ${activeTab==='review'?'active':''}" data-tab="review">Pending review</button>
         <button class="tab ${activeTab==='timesheets'?'active':''}" data-tab="timesheets">Timesheets</button>
+        <button class="tab ${activeTab==='timeoff'?'active':''}" data-tab="timeoff">Time Off</button>
         <button class="tab ${activeTab==='compliance'?'active':''}" data-tab="compliance">Compliance</button>
         <button class="tab ${activeTab==='content'?'active':''}" data-tab="content">Course content</button>
         <button class="tab ${activeTab==='settings'?'active':''}" data-tab="settings">Settings</button>
@@ -1005,6 +1245,7 @@ async function renderSupervisorView(){
   if(activeTab==="overview") renderOverviewTab(content);
   else if(activeTab==="review") renderReviewTab(content);
   else if(activeTab==="timesheets") await renderTimesheetsTab(content);
+  else if(activeTab==="timeoff") await renderTimeoffTab(content);
   else if(activeTab==="compliance") await renderComplianceTab(content);
   else if(activeTab==="content") renderContentTab(content);
   else renderSettingsTab(content);
@@ -1074,6 +1315,128 @@ function renderReviewTab(content){
   });
 }
 
+// ---------- Supervisor: Time Off tab ----------
+async function renderTimeoffTab(content){
+  const [pending, all] = await Promise.all([dbGetPendingTimeoff(), dbGetAllTimeoff()]);
+
+  let html = `<div class="card"><h3>Awaiting your approval (${pending.length})</h3>`;
+  if(pending.length===0){
+    html += `<div class="empty" style="padding:20px 10px;">&#10003; No time-off requests waiting on you.</div>`;
+  } else {
+    html += `<div id="pendingToList"></div>`;
+  }
+  html += `</div>`;
+
+  html += `<div class="card"><h3>All time-off requests</h3>`;
+  if(all.length===0){
+    html += `<div class="empty" style="padding:20px 10px;">No time-off requests yet.</div>`;
+  } else {
+    html += `<table class="log-table"><thead><tr><th>Employee</th><th>Category</th><th>Days</th><th>Status</th><th></th></tr></thead><tbody>`;
+    all.forEach(r=>{
+      const badge = r.status==="approved" ? `<span class="badge approved">Approved</span>`
+        : r.status==="denied" ? `<span class="badge" style="background:var(--red-bg); color:var(--red);">Denied</span>`
+        : `<span class="badge submitted">Pending</span>`;
+      html += `<tr>
+        <td>${r.employees ? r.employees.name : "-"}</td>
+        <td>${r.category}</td>
+        <td>${(r.dates||[]).length}</td>
+        <td>${badge}</td>
+        <td><button class="icon-btn" data-view="${r.id}" type="button">View</button></td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+  }
+  html += `</div>`;
+
+  content.innerHTML = html;
+
+  if(pending.length>0){
+    const list = document.getElementById("pendingToList");
+    pending.forEach(r=>{
+      const row = document.createElement("div");
+      row.className = "module-row";
+      row.innerHTML = `
+        <div class="module-info">
+          <div class="title">${r.employees ? r.employees.name : "-"} &mdash; ${r.category}</div>
+          <div class="meta">${(r.dates||[]).length} day(s) &middot; Requested ${fmtDate(r.submitted_at.slice(0,10))}</div>
+        </div>
+        <button class="btn btn-primary btn-sm" data-review="${r.id}" type="button">Review</button>
+      `;
+      list.appendChild(row);
+    });
+    list.querySelectorAll("button[data-review]").forEach(btn=>{
+      btn.onclick = ()=> openTimeoffReviewModal(pending.find(r=>String(r.id)===btn.dataset.review) || all.find(r=>String(r.id)===btn.dataset.review));
+    });
+  }
+  content.querySelectorAll("button[data-view]").forEach(btn=>{
+    btn.onclick = ()=> openTimeoffReviewModal(all.find(r=>String(r.id)===btn.dataset.view));
+  });
+}
+
+function openTimeoffReviewModal(r){
+  if(!r) return;
+  const emp = r.employees || {};
+  const dates = (r.dates||[]).slice().sort();
+  const canAct = r.status === "pending";
+
+  const byMonth = {};
+  dates.forEach(d=>{
+    const key = d.slice(0,7);
+    if(!byMonth[key]) byMonth[key] = [];
+    byMonth[key].push(d);
+  });
+  const dateBlocks = Object.entries(byMonth).map(([k, ds])=>{
+    const [y,m] = k.split("-");
+    return `<div style="margin-bottom:6px;"><strong style="font-size:12px; color:var(--navy);">${monthLabel(parseInt(y), parseInt(m))}:</strong> ${ds.map(d=> parseInt(d.slice(8))).join(", ")}</div>`;
+  }).join("");
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal">
+      <div class="modal-header">
+        <h3>${emp.name || "-"} &mdash; ${r.category}</h3>
+        <button class="modal-close-btn" id="modalCloseBtn" type="button">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="sub">${(r.dates||[]).length} day(s) requested &middot; ${fmtDate(r.submitted_at.slice(0,10))}</div>
+        <h3 style="margin-top:8px;">Dates</h3>
+        <div style="font-size:13px; color:var(--text); padding:12px 14px; background:var(--bg); border-radius:8px;">${dateBlocks}</div>
+        <h3 style="margin-top:16px;">Reason</h3>
+        <div style="font-size:13px; color:var(--text); padding:12px 14px; background:var(--bg); border-radius:8px;">${r.reason || "-"}</div>
+        ${(r.supervisor_note && !canAct) ? `<h3 style="margin-top:16px;">Your note</h3><div style="font-size:13px; padding:12px 14px; background:var(--amber-bg); border-left:3px solid var(--amber); border-radius:8px;">${r.supervisor_note}</div>` : ""}
+        ${canAct ? `
+          <div class="field full" style="margin-top:16px;"><label>Note to employee (optional)</label><textarea id="toNote" placeholder="Optional note..."></textarea></div>
+          <div class="modal-actions">
+            <button class="btn btn-danger" id="toDenyBtn" type="button">Deny</button>
+            <button class="btn btn-primary" id="toApproveBtn" type="button" style="width:auto;">Approve</button>
+          </div>
+        ` : `
+          <div class="modal-actions"><button class="btn btn-primary" id="toCloseBtn" type="button" style="width:auto;">Close</button></div>
+        `}
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById("modalCloseBtn").onclick = ()=> overlay.remove();
+  overlay.onclick = (e)=>{ if(e.target === overlay) overlay.remove(); };
+
+  if(canAct){
+    document.getElementById("toApproveBtn").onclick = async ()=>{
+      const note = document.getElementById("toNote").value.trim();
+      const ok = await dbDecideTimeoff(r.id, "approved", note);
+      if(ok){ showToast("Time off approved"); overlay.remove(); renderSupervisorView(); }
+    };
+    document.getElementById("toDenyBtn").onclick = async ()=>{
+      const note = document.getElementById("toNote").value.trim();
+      const ok = await dbDecideTimeoff(r.id, "denied", note);
+      if(ok){ showToast("Time off denied"); overlay.remove(); renderSupervisorView(); }
+    };
+  } else {
+    document.getElementById("toCloseBtn").onclick = ()=> overlay.remove();
+  }
+}
+
 // ---------- Supervisor: Timesheets tab ----------
 async function renderTimesheetsTab(content){
   const [pending, all] = await Promise.all([dbGetPendingTimesheets(), dbGetAllTimesheets()]);
@@ -1091,17 +1454,7 @@ async function renderTimesheetsTab(content){
   if(all.length===0){
     html += `<div class="empty" style="padding:20px 10px;">No timesheets submitted yet.</div>`;
   } else {
-    html += `<table class="log-table"><thead><tr><th>Employee</th><th>Month</th><th>Hours</th><th>Status</th><th></th></tr></thead><tbody>`;
-    all.forEach(h=>{
-      html += `<tr>
-        <td>${h.employees ? h.employees.name : "-"}</td>
-        <td>${monthLabel(h.year, h.month)}</td>
-        <td>${timesheetTotalHours(h)}</td>
-        <td>${tsStatusBadge(h.status)}</td>
-        <td><button class="icon-btn" data-view="${h.id}">View</button></td>
-      </tr>`;
-    });
-    html += `</tbody></table>`;
+    html += `<div id="tsByEmployee"></div>`;
   }
   html += `
     <div style="margin-top:14px;">
@@ -1110,6 +1463,48 @@ async function renderTimesheetsTab(content){
   </div>`;
 
   content.innerHTML = html;
+
+  // Group all timesheets by employee
+  if(all.length>0){
+    const groups = {};
+    all.forEach(h=>{
+      const name = h.employees ? h.employees.name : "Unknown";
+      const eid = h.employees ? h.employees.id : "unknown";
+      if(!groups[eid]) groups[eid] = {name, items:[]};
+      groups[eid].items.push(h);
+    });
+    const groupsEl = document.getElementById("tsByEmployee");
+    Object.values(groups).sort((a,b)=> a.name.localeCompare(b.name)).forEach(g=>{
+      // latest month label for the summary line
+      const latest = g.items.slice().sort((a,b)=> (b.year-a.year) || (b.month-a.month))[0];
+      const block = document.createElement("div");
+      block.className = "emp-ts-group";
+      block.innerHTML = `
+        <button class="emp-ts-toggle" type="button">
+          <span><strong>${g.name}</strong> <span style="color:var(--muted); font-weight:400;">&middot; ${g.items.length} timesheet(s) &middot; latest ${monthLabel(latest.year, latest.month)}</span></span>
+          <span class="chev">&#9662;</span>
+        </button>
+        <div class="emp-ts-body" style="display:none;">
+          <table class="log-table"><thead><tr><th>Month</th><th>Hours</th><th>Status</th><th></th></tr></thead><tbody>
+            ${g.items.sort((a,b)=> (b.year-a.year)||(b.month-a.month)).map(h=>`<tr>
+              <td>${monthLabel(h.year, h.month)}</td>
+              <td>${timesheetTotalHours(h)}</td>
+              <td>${tsStatusBadge(h.status)}</td>
+              <td><button class="icon-btn" data-view="${h.id}" type="button">View</button></td>
+            </tr>`).join("")}
+          </tbody></table>
+        </div>
+      `;
+      groupsEl.appendChild(block);
+      const toggle = block.querySelector(".emp-ts-toggle");
+      const body = block.querySelector(".emp-ts-body");
+      toggle.onclick = ()=>{
+        const open = body.style.display !== "none";
+        body.style.display = open ? "none" : "block";
+        block.querySelector(".chev").innerHTML = open ? "&#9662;" : "&#9652;";
+      };
+    });
+  }
 
   if(pending.length>0){
     const list = document.getElementById("pendingTsList");
@@ -1565,39 +1960,25 @@ function renderSettingsTab(content){
 }
 
 // ---------- Employee detail modal (view full transcript) ----------
-function openEmployeeDetail(empId){
+async function openEmployeeDetail(empId){
   const emp = EMPLOYEES_CACHE.find(e=>e.id===empId);
-  const stats = empStats(emp);
-  const withReflections = emp.modules.filter(m=>m.reflection);
+
+  // Training: completed + overdue only (no upcoming)
+  const completedModules = emp.modules.filter(m=> m.status==="completed");
+  const overdueModules = emp.modules.filter(m=> m.status!=="completed" && m.due_date && m.due_date < todayStr());
+
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
   overlay.innerHTML = `
-    <div class="modal" style="max-width:700px;">
+    <div class="modal" style="max-width:720px;">
       <div class="modal-header">
         <h3>${emp.name}</h3>
         <button class="modal-close-btn" id="modalCloseBtn" type="button">&times;</button>
       </div>
       <div class="modal-body">
-        <div class="sub">${emp.email ? emp.email+' &middot; ' : ''}${emp.role} &middot; Start date ${fmtDate(emp.start_date)} &middot; ${stats.completed}/${stats.total} completed (${stats.pct}%)</div>
+        <div class="sub">${emp.email ? emp.email+' &middot; ' : ''}${emp.role} &middot; Start date ${fmtDate(emp.start_date)}</div>
         <div class="sub">Employee ID: ${emp.employee_code || "not assigned"} &middot; Project ID: ${emp.project_id || "not assigned"}</div>
-        <table class="log-table">
-          <thead><tr><th>#</th><th>Module</th><th>Due</th><th>Status</th><th>Signed off</th><th>Video</th></tr></thead>
-          <tbody>
-            ${emp.modules.map(m=>`<tr><td>${m.module_index}</td><td>${m.title}</td><td>${fmtDate(m.due_date)}</td><td>${moduleStatusBadge(m)}</td><td>${m.signoff_date ? fmtDate(m.signoff_date) : "-"}</td><td>${m.video_url ? `<a href="${m.video_url}" target="_blank" rel="noopener noreferrer">Link</a>` : '-'}</td></tr>`).join("")}
-          </tbody>
-        </table>
-        ${withReflections.length>0 ? `
-          <h3 style="margin-top:22px;">Submitted summaries (${withReflections.length})</h3>
-          <div>
-            ${withReflections.map(m=>`
-              <div style="margin-bottom:12px; padding:12px 14px; background:var(--bg); border-radius:8px; border-left:3px solid var(--accent);">
-                <div style="font-size:12px; font-weight:700; color:var(--navy); margin-bottom:4px;">Module ${m.module_index}: ${m.title}</div>
-                <div style="font-size:11px; color:var(--muted); margin-bottom:6px;">Submitted ${fmtDate(m.completed_date)}${m.signoff_date ? ' &middot; Signed off '+fmtDate(m.signoff_date) : ' &middot; Awaiting sign-off'}</div>
-                <div style="font-size:13px; color:var(--text);">${m.reflection}</div>
-              </div>
-            `).join("")}
-          </div>
-        ` : ""}
+        <div id="empDetailBody"><div class="loading-screen" style="min-height:120px;"><div class="spinner"></div>Loading summary...</div></div>
         <div class="modal-actions">
           <button class="btn btn-secondary" id="exportEmpBtn">Export transcript (CSV)</button>
           <button class="btn btn-primary" id="closeBtn" style="width:auto;">Close</button>
@@ -1610,6 +1991,73 @@ function openEmployeeDetail(empId){
   document.getElementById("modalCloseBtn").onclick = ()=> overlay.remove();
   document.getElementById("closeBtn").onclick = ()=> overlay.remove();
   document.getElementById("exportEmpBtn").onclick = ()=> exportEmployeeCSV(emp);
+
+  // Fetch the cross-feature data for this employee
+  const [compliance, timesheets, timeoff] = await Promise.all([
+    dbGetComplianceForEmployee(emp.id),
+    dbGetTimesheetHistory(emp.id),
+    dbGetTimeoffForEmployee(emp.id)
+  ]);
+
+  const complianceDone = compliance.filter(a=> a.watched_at);
+  const compliancePending = compliance.filter(a=> !a.watched_at);
+  const approvedTimesheets = timesheets.filter(t=> t.status==="approved");
+  const approvedTimeoff = timeoff.filter(t=> t.status==="approved");
+
+  const body = document.getElementById("empDetailBody");
+  if(!body) return; // modal closed before load finished
+
+  const section = (title, count, inner)=> `
+    <h3 style="margin-top:20px; display:flex; align-items:center; gap:8px;">${title} <span style="font-size:12px; font-weight:500; color:var(--muted);">${count}</span></h3>
+    ${inner}
+  `;
+  const emptyLine = (txt)=> `<div style="font-size:13px; color:var(--muted); padding:6px 0;">${txt}</div>`;
+
+  body.innerHTML = `
+    <div class="stats-row" style="margin-top:16px;">
+      <div class="stat-card"><div class="label">Training completed</div><div class="value green">${completedModules.length}</div></div>
+      <div class="stat-card"><div class="label">Training overdue</div><div class="value ${overdueModules.length>0?'amber':''}">${overdueModules.length}</div></div>
+      <div class="stat-card"><div class="label">Compliance watched</div><div class="value green">${complianceDone.length}</div></div>
+      <div class="stat-card"><div class="label">Approved timesheets</div><div class="value">${approvedTimesheets.length}</div></div>
+    </div>
+
+    ${section("Training &mdash; completed", `${completedModules.length}`, completedModules.length
+      ? `<table class="log-table"><thead><tr><th>#</th><th>Module</th><th>Signed off</th><th></th></tr></thead><tbody>${completedModules.map(m=>`<tr><td>${m.module_index}</td><td>${m.title}</td><td>${m.signoff_date ? fmtDate(m.signoff_date) : "-"}</td><td>${m.reflection ? `<button class="link mod-toggle" data-mod="${m.module_index}" type="button">Summary &#9662;</button>` : `<span style="color:var(--muted); font-size:12px;">No summary</span>`}</td></tr>${m.reflection ? `<tr class="mod-summary" id="mod-summary-${m.module_index}" style="display:none;"><td colspan="4" style="background:var(--bg);"><div style="padding:10px 12px; border-left:3px solid var(--accent); font-size:13px; color:var(--text);"><div style="font-size:11px; color:var(--muted); margin-bottom:4px;">Submitted ${m.completed_date ? fmtDate(m.completed_date) : "-"}</div>${m.reflection}</div></td></tr>` : ""}`).join("")}</tbody></table>`
+      : emptyLine("No completed modules yet."))}
+
+    ${section("Training &mdash; overdue", `${overdueModules.length}`, overdueModules.length
+      ? `<table class="log-table"><thead><tr><th>#</th><th>Module</th><th>Due</th></tr></thead><tbody>${overdueModules.map(m=>`<tr><td>${m.module_index}</td><td>${m.title}</td><td style="color:var(--red);">${fmtDate(m.due_date)}</td></tr>`).join("")}</tbody></table>`
+      : emptyLine("Nothing overdue. &#10003;"))}
+
+    ${section("Compliance videos", `${complianceDone.length} watched / ${compliancePending.length} pending`, compliance.length
+      ? `<table class="log-table"><thead><tr><th>Video</th><th>Due</th><th>Status</th></tr></thead><tbody>${compliance.map(a=>{
+          const v = a.compliance_videos || {};
+          const watched = !!a.watched_at;
+          const overdue = !watched && a.due_date && a.due_date < todayStr();
+          return `<tr><td>${v.title||"-"}</td><td>${a.due_date?fmtDate(a.due_date):"-"}</td><td>${watched?`<span class="badge approved">Watched</span>`:(overdue?`<span class="badge submitted">Overdue</span>`:`<span class="badge draft">Pending</span>`)}</td></tr>`;
+        }).join("")}</tbody></table>`
+      : emptyLine("No compliance videos assigned."))}
+
+    ${section("Timesheets &mdash; approved", `${approvedTimesheets.length}`, approvedTimesheets.length
+      ? `<table class="log-table"><thead><tr><th>Month</th><th>Hours</th><th>Approved</th></tr></thead><tbody>${approvedTimesheets.map(t=>`<tr><td>${monthLabel(t.year,t.month)}</td><td>${timesheetTotalHours(t)}</td><td>${t.approved_at?fmtDate(t.approved_at.slice(0,10)):"-"}</td></tr>`).join("")}</tbody></table>`
+      : emptyLine("No approved timesheets yet."))}
+
+    ${section("Time off &mdash; approved", `${approvedTimeoff.length}`, approvedTimeoff.length
+      ? `<table class="log-table"><thead><tr><th>Category</th><th>Days</th><th>Reason</th></tr></thead><tbody>${approvedTimeoff.map(t=>`<tr><td>${t.category}</td><td>${(t.dates||[]).length}</td><td>${t.reason||"-"}</td></tr>`).join("")}</tbody></table>`
+      : emptyLine("No approved time off."))}
+
+    <p style="font-size:12px; color:var(--muted); margin-top:18px;">This summary shows completed, overdue, and approved items. Anything still pending approval appears in the Pending review, Timesheets, Time Off, and Compliance tabs.</p>
+  `;
+
+  body.querySelectorAll(".mod-toggle").forEach(btn=>{
+    btn.onclick = ()=>{
+      const row = document.getElementById(`mod-summary-${btn.dataset.mod}`);
+      if(!row) return;
+      const open = row.style.display !== "none";
+      row.style.display = open ? "none" : "table-row";
+      btn.innerHTML = open ? "Summary &#9662;" : "Summary &#9652;";
+    };
+  });
 }
 
 // ---------- Add / Edit employee form (full admin control) ----------
