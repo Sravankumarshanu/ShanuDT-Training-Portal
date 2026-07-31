@@ -29,7 +29,7 @@
   .field label{display:block; font-size:12px; font-weight:600; color:var(--muted); margin-bottom:6px; text-transform:uppercase; letter-spacing:.03em;}
   .field select, .field input{width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:8px; font-size:14px; background:#fff;}
   .field select:focus, .field input:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-light);}
-  .btn{display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:10px 18px; border-radius:8px; border:none; font-size:14px; font-weight:600; transition:opacity .15s;}
+  .btn{display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:10px 18px; border-radius:8px; border:none; font-size:14px; font-weight:600; transition:opacity .15s; cursor:pointer; text-decoration:none;}
   .btn:hover{opacity:.9;}
   .btn-primary{background:var(--navy); color:#fff; width:100%; padding:12px;}
   .btn-danger{background:var(--red); color:#fff;}
@@ -412,6 +412,71 @@ async function notifySupervisorOfTimesheet(payload){
   }
 }
 
+// ---------- Compliance training data layer ----------
+async function dbGetComplianceVideos(){
+  const {data, error} = await sb.from("compliance_videos").select("*").order("created_at",{ascending:false});
+  if(error){ console.error(error); return []; }
+  return data || [];
+}
+async function dbCreateComplianceVideo(title, url){
+  const {data, error} = await sb.from("compliance_videos").insert({title, video_url: url || null}).select().single();
+  if(error){ console.error(error); showToast("Failed to add video", true); return null; }
+  return data;
+}
+async function dbDeleteComplianceVideo(id){
+  const {error} = await sb.from("compliance_videos").delete().eq("id", id);
+  if(error){ console.error(error); showToast("Failed to delete video", true); return false; }
+  return true;
+}
+async function dbGetAssignmentsForVideo(videoId){
+  const {data, error} = await sb.from("compliance_assignments").select("*, employees(id,name)").eq("video_id", videoId);
+  if(error){ console.error(error); return []; }
+  return data || [];
+}
+async function dbGetAllComplianceAssignments(){
+  const {data, error} = await sb.from("compliance_assignments").select("*, compliance_videos(id,title,video_url), employees(id,name)");
+  if(error){ console.error(error); return []; }
+  return data || [];
+}
+async function dbGetComplianceForEmployee(employeeId){
+  const {data, error} = await sb.from("compliance_assignments").select("*, compliance_videos(id,title,video_url)").eq("employee_id", employeeId).order("due_date",{ascending:true});
+  if(error){ console.error(error); return []; }
+  return data || [];
+}
+async function dbAssignCompliance(videoId, employeeIds, dueDate, autoFuture){
+  const rows = employeeIds.map(eid=>({video_id: videoId, employee_id: eid, due_date: dueDate || null, auto_future: !!autoFuture}));
+  // upsert so re-assigning doesn't error on the unique constraint; keeps existing watched_at intact for conflicts we ignore
+  const {error} = await sb.from("compliance_assignments").upsert(rows, {onConflict:"video_id,employee_id", ignoreDuplicates:true});
+  if(error){ console.error(error); showToast("Failed to assign video", true); return false; }
+  return true;
+}
+async function dbUnassignCompliance(assignmentId){
+  const {error} = await sb.from("compliance_assignments").delete().eq("id", assignmentId);
+  if(error){ console.error(error); showToast("Failed to remove assignment", true); return false; }
+  return true;
+}
+async function dbMarkComplianceWatched(assignmentId){
+  const {error} = await sb.from("compliance_assignments").update({watched_at: new Date().toISOString()}).eq("id", assignmentId);
+  if(error){ console.error(error); showToast("Failed to update", true); return false; }
+  return true;
+}
+async function applyAutoFutureCompliance(newEmployeeId){
+  // Find distinct videos that were assigned company-wide with auto_future = true,
+  // and assign them to the newly created employee too.
+  const {data, error} = await sb.from("compliance_assignments").select("video_id, due_date").eq("auto_future", true);
+  if(error || !data || data.length===0) return;
+  // Dedup by video_id, keep the earliest due date seen
+  const byVideo = {};
+  data.forEach(a=>{ if(!byVideo[a.video_id]) byVideo[a.video_id] = a.due_date; });
+  const rows = Object.entries(byVideo).map(([video_id, due_date])=>({
+    video_id: parseInt(video_id), employee_id: newEmployeeId, due_date: due_date || null, auto_future: true
+  }));
+  if(rows.length>0){
+    const {error: insErr} = await sb.from("compliance_assignments").upsert(rows, {onConflict:"video_id,employee_id", ignoreDuplicates:true});
+    if(insErr) console.error("auto-future compliance assign failed:", insErr);
+  }
+}
+
 async function loadEmployeesWithModules(){
   const emps = await dbGetAllEmployees();
   const full = [];
@@ -562,6 +627,7 @@ async function renderEmployeeView(){
       </div>
       <div class="tabs">
         <button class="tab ${activeTab==='videos'?'active':''}" data-tab="videos">Training</button>
+        <button class="tab ${activeTab==='compliance'?'active':''}" data-tab="compliance">Compliance</button>
         <button class="tab ${activeTab==='timesheets'?'active':''}" data-tab="timesheets">Timesheets</button>
       </div>
       <div id="empTabContent"></div>
@@ -574,7 +640,67 @@ async function renderEmployeeView(){
   content.innerHTML = `<div class="loading-screen" style="min-height:200px;"><div class="spinner"></div>Loading...</div>`;
 
   if(activeTab === "timesheets") await renderEmployeeTimesheetsTab(content, emp);
+  else if(activeTab === "compliance") await renderEmployeeComplianceTab(content, emp);
   else await renderEmployeeTrainingTab(content, emp);
+}
+
+async function renderEmployeeComplianceTab(content, emp){
+  const assignments = await dbGetComplianceForEmployee(emp.id);
+
+  if(assignments.length === 0){
+    content.innerHTML = `<div class="card"><div class="empty" style="padding:30px 10px;">No compliance training has been assigned to you right now.</div></div>`;
+    return;
+  }
+
+  const pending = assignments.filter(a=> !a.watched_at);
+  const done = assignments.filter(a=> a.watched_at);
+
+  content.innerHTML = `
+    <div class="stats-row">
+      <div class="stat-card"><div class="label">Assigned</div><div class="value">${assignments.length}</div></div>
+      <div class="stat-card"><div class="label">Completed</div><div class="value green">${done.length}</div></div>
+      <div class="stat-card"><div class="label">To watch</div><div class="value ${pending.length>0?'amber':''}">${pending.length}</div></div>
+    </div>
+    <div class="card">
+      <h3>Assigned compliance videos</h3>
+      <div id="complianceList"></div>
+    </div>
+  `;
+
+  const list = document.getElementById("complianceList");
+  assignments.forEach(a=>{
+    const v = a.compliance_videos || {};
+    const watched = !!a.watched_at;
+    const overdue = !watched && a.due_date && a.due_date < todayStr();
+    const row = document.createElement("div");
+    row.className = "module-row";
+    row.innerHTML = `
+      <div class="module-info">
+        <div class="title">${v.title || "(untitled video)"}</div>
+        <div class="meta">
+          ${a.due_date ? `Due ${fmtDate(a.due_date)}` : "No due date"}
+          ${overdue ? ` &middot; <span style="color:var(--red); font-weight:600;">Overdue</span>` : ""}
+          ${watched ? ` &middot; <span style="color:var(--green); font-weight:600;">Watched ${fmtDate(a.watched_at.slice(0,10))}</span>` : ""}
+        </div>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        ${v.video_url ? `<a class="btn btn-secondary btn-sm" href="${v.video_url}" target="_blank" rel="noopener noreferrer">Watch</a>` : ""}
+        ${watched
+          ? `<span class="badge approved">Done</span>`
+          : `<button class="btn btn-primary btn-sm" data-mark="${a.id}" type="button">Mark as watched</button>`}
+      </div>
+    `;
+    list.appendChild(row);
+  });
+
+  list.querySelectorAll("button[data-mark]").forEach(btn=>{
+    btn.onclick = async ()=>{
+      btn.disabled = true; btn.textContent = "Saving...";
+      const ok = await dbMarkComplianceWatched(btn.dataset.mark);
+      if(ok){ showToast("Marked as watched"); renderEmployeeView(); }
+      else { btn.disabled = false; btn.textContent = "Mark as watched"; }
+    };
+  });
 }
 
 async function renderEmployeeTrainingTab(content, emp){
@@ -860,6 +986,7 @@ async function renderSupervisorView(){
         <button class="tab ${activeTab==='overview'?'active':''}" data-tab="overview">Employees</button>
         <button class="tab ${activeTab==='review'?'active':''}" data-tab="review">Pending review</button>
         <button class="tab ${activeTab==='timesheets'?'active':''}" data-tab="timesheets">Timesheets</button>
+        <button class="tab ${activeTab==='compliance'?'active':''}" data-tab="compliance">Compliance</button>
         <button class="tab ${activeTab==='content'?'active':''}" data-tab="content">Course content</button>
         <button class="tab ${activeTab==='settings'?'active':''}" data-tab="settings">Settings</button>
       </div>
@@ -878,6 +1005,7 @@ async function renderSupervisorView(){
   if(activeTab==="overview") renderOverviewTab(content);
   else if(activeTab==="review") renderReviewTab(content);
   else if(activeTab==="timesheets") await renderTimesheetsTab(content);
+  else if(activeTab==="compliance") await renderComplianceTab(content);
   else if(activeTab==="content") renderContentTab(content);
   else renderSettingsTab(content);
 }
@@ -1083,6 +1211,194 @@ function exportTimesheetsCSV(all){
   });
   downloadCSV(`ShanuDT_Timesheets_${todayStr()}.csv`, rows);
   showToast("Timesheets exported");
+}
+
+// ---------- Supervisor: Compliance tab ----------
+async function renderComplianceTab(content){
+  const [videos, allAssignments] = await Promise.all([dbGetComplianceVideos(), dbGetAllComplianceAssignments()]);
+
+  // group assignments per video
+  const byVideo = {};
+  allAssignments.forEach(a=>{
+    if(!byVideo[a.video_id]) byVideo[a.video_id] = [];
+    byVideo[a.video_id].push(a);
+  });
+
+  let html = `
+    <div class="card">
+      <div class="card-head-row"><h3>Compliance video library</h3></div>
+      <p style="font-size:13px; color:var(--muted); margin-bottom:14px;">Company-wide training (e.g. harassment, bribery, CPR). Separate from the STEM OPT curriculum. Add a video, then assign it to specific people or everyone.</p>
+      <div class="form-grid">
+        <div class="field"><label>Video title</label><input type="text" id="cvTitle" placeholder="e.g. Anti-Harassment Training 2026" /></div>
+        <div class="field"><label>Video URL</label><input type="text" id="cvUrl" placeholder="https://..." /></div>
+      </div>
+      <button class="btn btn-primary btn-sm" id="cvAddBtn" type="button" style="width:auto;">Add to library</button>
+    </div>
+  `;
+
+  html += `<div class="card"><h3>Videos & assignments</h3>`;
+  if(videos.length === 0){
+    html += `<div class="empty" style="padding:20px 10px;">No compliance videos yet. Add one above to get started.</div>`;
+  } else {
+    html += `<div id="cvList"></div>`;
+  }
+  html += `</div>`;
+
+  content.innerHTML = html;
+
+  document.getElementById("cvAddBtn").onclick = async ()=>{
+    const title = document.getElementById("cvTitle").value.trim();
+    const url = document.getElementById("cvUrl").value.trim();
+    if(!title){ showToast("Please enter a video title", true); return; }
+    const btn = document.getElementById("cvAddBtn");
+    btn.disabled = true; btn.textContent = "Adding...";
+    const created = await dbCreateComplianceVideo(title, url);
+    if(created){ showToast("Video added"); renderSupervisorView(); }
+    else { btn.disabled = false; btn.textContent = "Add to library"; }
+  };
+
+  if(videos.length > 0){
+    const list = document.getElementById("cvList");
+    videos.forEach(v=>{
+      const assignments = byVideo[v.id] || [];
+      const watchedCount = assignments.filter(a=> a.watched_at).length;
+      const card = document.createElement("div");
+      card.style.cssText = "padding:14px 0; border-bottom:1px solid var(--border);";
+      card.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
+          <div>
+            <div style="font-weight:700; color:var(--navy);">${v.title}</div>
+            <div style="font-size:12px; color:var(--muted); margin-top:2px;">
+              ${v.video_url ? `<a href="${v.video_url}" target="_blank" rel="noopener noreferrer">Open video</a> &middot; ` : ""}
+              Assigned to ${assignments.length} &middot; ${watchedCount} watched
+            </div>
+          </div>
+          <div style="display:flex; gap:8px; flex-shrink:0;">
+            <button class="btn btn-secondary btn-sm" data-assign="${v.id}" type="button">Assign</button>
+            <button class="icon-btn" data-detail="${v.id}" type="button">Details</button>
+            <button class="icon-btn" data-delvideo="${v.id}" type="button" style="color:var(--red);">Delete</button>
+          </div>
+        </div>
+        <div id="cvDetail-${v.id}" style="display:none; margin-top:10px;"></div>
+      `;
+      list.appendChild(card);
+    });
+
+    list.querySelectorAll("button[data-assign]").forEach(btn=>{
+      btn.onclick = ()=> openComplianceAssignModal(videos.find(v=>String(v.id)===btn.dataset.assign));
+    });
+    list.querySelectorAll("button[data-detail]").forEach(btn=>{
+      btn.onclick = ()=>{
+        const vid = btn.dataset.detail;
+        const el = document.getElementById(`cvDetail-${vid}`);
+        if(el.style.display === "none"){
+          const assignments = byVideo[vid] || [];
+          el.innerHTML = assignments.length === 0
+            ? `<div style="font-size:13px; color:var(--muted); padding:8px 0;">Not assigned to anyone yet.</div>`
+            : `<table class="log-table"><thead><tr><th>Employee</th><th>Due</th><th>Status</th><th></th></tr></thead><tbody>${
+                assignments.map(a=>`<tr>
+                  <td>${a.employees ? a.employees.name : "-"}</td>
+                  <td>${a.due_date ? fmtDate(a.due_date) : "-"}</td>
+                  <td>${a.watched_at ? `<span class="badge approved">Watched ${fmtDate(a.watched_at.slice(0,10))}</span>` : (a.due_date && a.due_date < todayStr() ? `<span class="badge submitted">Overdue</span>` : `<span class="badge draft">Not watched</span>`)}</td>
+                  <td><button class="icon-btn" data-unassign="${a.id}" type="button" style="color:var(--red);">Remove</button></td>
+                </tr>`).join("")
+              }</tbody></table>`;
+          el.style.display = "block";
+          el.querySelectorAll("button[data-unassign]").forEach(ub=>{
+            ub.onclick = async ()=>{
+              const ok = await dbUnassignCompliance(ub.dataset.unassign);
+              if(ok){ showToast("Assignment removed"); renderSupervisorView(); }
+            };
+          });
+        } else {
+          el.style.display = "none";
+        }
+      };
+    });
+    list.querySelectorAll("button[data-delvideo]").forEach(btn=>{
+      btn.onclick = async ()=>{
+        if(!confirm("Delete this video and all its assignments? This cannot be undone.")) return;
+        const ok = await dbDeleteComplianceVideo(btn.dataset.delvideo);
+        if(ok){ showToast("Video deleted"); renderSupervisorView(); }
+      };
+    });
+  }
+}
+
+function openComplianceAssignModal(video){
+  if(!video) return;
+  const activeEmployees = EMPLOYEES_CACHE.filter(e=> e.active !== false);
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Assign: ${video.title}</h3>
+        <button class="modal-close-btn" id="modalCloseBtn" type="button">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="sub">Choose who must watch this video and set a due date.</div>
+
+        <div class="field"><label>Due date</label><input type="date" id="caDue" /></div>
+
+        <div class="field" style="margin-top:4px;">
+          <label style="display:flex; align-items:center; gap:8px;"><input type="radio" name="caScope" value="all" checked style="width:auto;"/>Everyone (all active employees)</label>
+          <label style="display:flex; align-items:center; gap:8px; margin-top:6px;"><input type="radio" name="caScope" value="pick" style="width:auto;"/>Pick specific employees</label>
+        </div>
+
+        <div id="caFutureWrap" class="field" style="margin-top:4px;">
+          <label style="display:flex; align-items:center; gap:8px;"><input type="checkbox" id="caFuture" style="width:auto;"/>Also apply to employees added later</label>
+        </div>
+
+        <div id="caPickList" style="display:none; max-height:220px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; padding:10px; margin-top:6px;">
+          ${activeEmployees.map(e=>`<label style="display:flex; align-items:center; gap:8px; padding:5px 0;"><input type="checkbox" class="caEmp" value="${e.id}" style="width:auto;"/>${e.name} <span style="color:var(--muted); font-size:12px;">(${e.role||"-"})</span></label>`).join("")}
+        </div>
+
+        <div class="modal-actions">
+          <button class="btn btn-secondary" id="caCancelBtn" type="button">Cancel</button>
+          <button class="btn btn-primary" id="caAssignBtn" type="button" style="width:auto;">Assign</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const pickList = document.getElementById("caPickList");
+  const futureWrap = document.getElementById("caFutureWrap");
+  overlay.querySelectorAll('input[name="caScope"]').forEach(r=>{
+    r.onchange = ()=>{
+      const isPick = overlay.querySelector('input[name="caScope"]:checked').value === "pick";
+      pickList.style.display = isPick ? "block" : "none";
+      futureWrap.style.display = isPick ? "none" : "block"; // auto-future only meaningful company-wide
+    };
+  });
+
+  document.getElementById("modalCloseBtn").onclick = ()=> overlay.remove();
+  document.getElementById("caCancelBtn").onclick = ()=> overlay.remove();
+  overlay.onclick = (e)=>{ if(e.target === overlay) overlay.remove(); };
+
+  document.getElementById("caAssignBtn").onclick = async ()=>{
+    const due = document.getElementById("caDue").value;
+    const scope = overlay.querySelector('input[name="caScope"]:checked').value;
+
+    let empIds = [];
+    let autoFuture = false;
+    if(scope === "all"){
+      empIds = activeEmployees.map(e=> e.id);
+      autoFuture = document.getElementById("caFuture").checked;
+    } else {
+      empIds = Array.from(overlay.querySelectorAll(".caEmp:checked")).map(c=> c.value);
+    }
+
+    if(empIds.length === 0){ showToast("Select at least one employee", true); return; }
+
+    const btn = document.getElementById("caAssignBtn");
+    btn.disabled = true; btn.textContent = "Assigning...";
+    const ok = await dbAssignCompliance(video.id, empIds, due, autoFuture);
+    if(ok){ showToast(`Assigned to ${empIds.length} employee(s)`); overlay.remove(); renderSupervisorView(); }
+    else { btn.disabled = false; btn.textContent = "Assign"; }
+  };
 }
 
 let contentSelectedEmpIds = []; // employees currently targeted by the content tab
@@ -1378,7 +1694,7 @@ function openEmployeeForm(empId){
     } else {
       const assignModules = document.getElementById("fAssignModules").checked;
       const created = await dbCreateEmployeeWithModules({name, email, username, password:pass, role:roleVal, startDate:start, employeeCode:empCode, projectId:projectId, assignModules});
-      if(created){ showToast("Employee created"); overlay.remove(); renderSupervisorView(); }
+      if(created){ await applyAutoFutureCompliance(created.id); showToast("Employee created"); overlay.remove(); renderSupervisorView(); }
       else { saveBtn.disabled=false; saveBtn.textContent="Create employee"; }
     }
   };
