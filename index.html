@@ -305,22 +305,46 @@ async function dbCreateEmployeeWithModules(emp){
   const {data, error} = await sb.from("employees").insert({
     username: emp.username, password: emp.password, name: emp.name,
     role: emp.role, start_date: emp.startDate, email: emp.email || null, active: true,
-    employee_code: emp.employeeCode || null, project_id: emp.projectId || null
+    employee_code: emp.employeeCode || null, project_id: emp.projectId || null,
+    visa_category: emp.visaCategory || null, stem_start_date: emp.stemStartDate || null
   }).select().single();
   if(error){ showToast(error.message.includes("duplicate") ? "Username already taken" : "Failed to create employee", true); return null; }
 
-  if(emp.assignModules !== false){
+  if(emp.assignModules){
+    // STEM training is anchored to the STEM OPT start date, not the general start date
+    const anchor = emp.scheduleAnchor || emp.stemStartDate || emp.startDate;
     const modules = CURRICULUM.map((title,i)=>({
       employee_id: data.id,
       module_index: i+1,
       title,
-      due_date: dueDateForModule(emp.startDate, i),
+      due_date: dueDateForModule(anchor, i),
       status: "upcoming"
     }));
     const {error: modErr} = await sb.from("modules").insert(modules);
     if(modErr){ showToast("Employee created but modules failed", true); console.error(modErr); }
   }
   return data;
+}
+// Re-anchor an existing employee's module schedule to a new start date,
+// KEEPING completion status/reflections — only the due dates shift.
+async function dbReanchorSchedule(employeeId, anchorDate){
+  // Fetch existing modules so we only touch ones that exist
+  const {data: existing, error} = await sb.from("modules").select("id, module_index").eq("employee_id", employeeId);
+  if(error){ console.error(error); showToast("Could not load modules to re-anchor", true); return false; }
+  if(!existing || existing.length === 0){
+    // No modules yet — create the full curriculum from the anchor
+    const modules = CURRICULUM.map((title,i)=>({
+      employee_id: employeeId, module_index: i+1, title,
+      due_date: dueDateForModule(anchorDate, i), status: "upcoming"
+    }));
+    const {error: insErr} = await sb.from("modules").insert(modules);
+    if(insErr){ console.error(insErr); showToast("Failed to create schedule", true); return false; }
+    return true;
+  }
+  for(const m of existing){
+    await sb.from("modules").update({ due_date: dueDateForModule(anchorDate, m.module_index - 1) }).eq("id", m.id);
+  }
+  return true;
 }
 async function dbUpdateEmployee(id, fields){
   const {error} = await sb.from("employees").update(fields).eq("id", id);
@@ -355,6 +379,17 @@ async function dbBulkSetVideoUrlsAllEmployees(urlsByIndex){
   }
 }
 async function dbResetEmployeeProgress(employeeId, startDate){
+  // If this employee has no modules yet, create the full curriculum fresh
+  const {data: existing} = await sb.from("modules").select("id").eq("employee_id", employeeId).limit(1);
+  if(!existing || existing.length === 0){
+    const fresh = CURRICULUM.map((title,i)=>({
+      employee_id: employeeId, module_index: i+1, title,
+      due_date: dueDateForModule(startDate, i), status: "upcoming"
+    }));
+    const {error: insErr} = await sb.from("modules").insert(fresh);
+    if(insErr){ console.error(insErr); showToast("Failed to create schedule", true); }
+    return;
+  }
   const modules = CURRICULUM.map((title,i)=>({
     module_index: i+1, due_date: dueDateForModule(startDate, i),
     status: "upcoming", reflection: null, completed_date: null,
@@ -1978,6 +2013,7 @@ async function openEmployeeDetail(empId){
       <div class="modal-body">
         <div class="sub">${emp.email ? emp.email+' &middot; ' : ''}${emp.role} &middot; Start date ${fmtDate(emp.start_date)}</div>
         <div class="sub">Employee ID: ${emp.employee_code || "not assigned"} &middot; Project ID: ${emp.project_id || "not assigned"}</div>
+        <div class="sub">Visa: ${emp.visa_category || "not set"}${emp.visa_category==="STEM OPT EAD" && emp.stem_start_date ? ` &middot; STEM OPT start ${fmtDate(emp.stem_start_date)}` : ""}</div>
         <div id="empDetailBody"><div class="loading-screen" style="min-height:120px;"><div class="spinner"></div>Loading summary...</div></div>
         <div class="modal-actions">
           <button class="btn btn-secondary" id="exportEmpBtn">Export transcript (CSV)</button>
@@ -2083,10 +2119,23 @@ function openEmployeeForm(empId){
           <div class="field"><label>Start date</label><input type="date" id="fStart" value="${isEdit?emp.start_date:''}" /></div>
           <div class="field"><label>Employee ID</label><input type="text" id="fEmpCode" value="${isEdit?(emp.employee_code||''):''}" placeholder="e.g. EMP-1042" /></div>
           <div class="field"><label>Project ID</label><input type="text" id="fProjectId" value="${isEdit?(emp.project_id||''):''}" placeholder="e.g. PRJ-Alpha-7" /></div>
+          <div class="field"><label>Visa category</label><select id="fVisa">
+            ${["","US Citizen","OPT EAD","STEM OPT EAD","H4 EAD","CPT","Green Card"].map(v=>`<option value="${v}" ${isEdit && (emp.visa_category||"")===v ? "selected" : (!isEdit && v===""?"selected":"")}>${v||"— Select —"}</option>`).join("")}
+          </select></div>
+          <div class="field" id="fStemWrap" style="display:none;"><label>STEM OPT start date</label><input type="date" id="fStemStart" value="${isEdit?(emp.stem_start_date||''):''}" /></div>
           ${isEdit ? `<div class="field"><label>Status</label><select id="fActive"><option value="true" ${emp.active?'selected':''}>Active</option><option value="false" ${!emp.active?'selected':''}>Inactive</option></select></div>` : ""}
         </div>
-        ${!isEdit ? `<div class="field" style="margin-top:8px;"><label><input type="checkbox" id="fAssignModules" checked style="width:auto; margin-right:6px;"/>Assign the 40-module training curriculum (based on start date)</label></div>` : ""}
-        ${isEdit ? `<div class="field" style="margin-top:8px;"><label><input type="checkbox" id="fReset" style="width:auto; margin-right:6px;"/>Reset all training progress (re-generates schedule from start date, clears completions)</label></div>` : ""}
+
+        <div id="fStemTrainingWrap" style="display:none;">
+          ${!isEdit ? `<div class="field" style="margin-top:8px;"><label><input type="checkbox" id="fAssignModules" checked style="width:auto; margin-right:6px;"/>Assign the 40-module STEM training curriculum (scheduled from the STEM OPT start date)</label></div>` : ""}
+          ${isEdit ? `
+            <div class="field" style="margin-top:8px;"><label><input type="checkbox" id="fReanchor" style="width:auto; margin-right:6px;"/>Re-anchor / assign STEM training schedule from the STEM OPT start date above</label></div>
+            <div class="field" id="fReanchorModeWrap" style="display:none; margin-left:24px;">
+              <label style="display:flex; align-items:center; gap:8px; font-weight:400;"><input type="radio" name="reanchorMode" value="keep" checked style="width:auto;"/>Keep completed modules, only fix the schedule dates</label>
+              <label style="display:flex; align-items:center; gap:8px; font-weight:400; margin-top:4px;"><input type="radio" name="reanchorMode" value="reset" style="width:auto;"/>Reset all progress and reschedule from scratch</label>
+            </div>
+          ` : ""}
+        </div>
         <div class="modal-actions" style="justify-content:space-between;">
           <div>${isEdit ? `<button class="btn btn-danger btn-sm" id="deleteBtn" type="button">Delete employee</button>` : ""}</div>
           <div style="display:flex; gap:10px;">
@@ -2101,6 +2150,26 @@ function openEmployeeForm(empId){
   overlay.onclick = (e)=>{ if(e.target===overlay) overlay.remove(); };
   document.getElementById("modalCloseBtn").onclick = ()=> overlay.remove();
   document.getElementById("cancelBtn").onclick = ()=> overlay.remove();
+
+  // Show STEM-related fields only when visa category is STEM OPT EAD
+  const visaSel = document.getElementById("fVisa");
+  const stemWrap = document.getElementById("fStemWrap");
+  const stemTrainingWrap = document.getElementById("fStemTrainingWrap");
+  function syncStemVisibility(){
+    const isStem = visaSel.value === "STEM OPT EAD";
+    stemWrap.style.display = isStem ? "" : "none";
+    stemTrainingWrap.style.display = isStem ? "" : "none";
+  }
+  visaSel.onchange = syncStemVisibility;
+  syncStemVisibility();
+
+  // Re-anchor mode radios (edit only)
+  const reanchorCb = document.getElementById("fReanchor");
+  if(reanchorCb){
+    reanchorCb.onchange = ()=>{
+      document.getElementById("fReanchorModeWrap").style.display = reanchorCb.checked ? "" : "none";
+    };
+  }
 
   if(isEdit){
     document.getElementById("deleteBtn").onclick = async ()=>{
@@ -2119,6 +2188,9 @@ function openEmployeeForm(empId){
     const start = document.getElementById("fStart").value;
     const empCode = document.getElementById("fEmpCode").value.trim();
     const projectId = document.getElementById("fProjectId").value.trim();
+    const visa = document.getElementById("fVisa").value;
+    const isStem = visa === "STEM OPT EAD";
+    const stemStart = isStem ? document.getElementById("fStemStart").value : "";
 
     if(!name || !username || !start || (!isEdit && !pass)){
       showToast("Please fill in all required fields", true); return;
@@ -2126,22 +2198,34 @@ function openEmployeeForm(empId){
     if(email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
       showToast("Please enter a valid email address", true); return;
     }
+    if(isStem && !stemStart){
+      showToast("Please enter the STEM OPT start date", true); return;
+    }
 
     const saveBtn = document.getElementById("saveBtn");
     saveBtn.disabled = true; saveBtn.textContent = "Saving...";
 
     if(isEdit){
-      const fields = {name, email: email||null, username, role: roleVal, start_date: start, active: document.getElementById("fActive").value === "true", employee_code: empCode||null, project_id: projectId||null};
+      const fields = {name, email: email||null, username, role: roleVal, start_date: start, active: document.getElementById("fActive").value === "true", employee_code: empCode||null, project_id: projectId||null, visa_category: visa||null, stem_start_date: stemStart||null};
       if(pass) fields.password = pass;
       const ok = await dbUpdateEmployee(emp.id, fields);
       if(ok){
-        const doReset = document.getElementById("fReset").checked;
-        if(doReset) await dbResetEmployeeProgress(emp.id, start);
+        // Re-anchor STEM training schedule if requested (STEM category only)
+        const reanchorCb = document.getElementById("fReanchor");
+        if(isStem && reanchorCb && reanchorCb.checked && stemStart){
+          const mode = (overlay.querySelector('input[name="reanchorMode"]:checked')||{}).value || "keep";
+          if(mode === "reset"){
+            await dbResetEmployeeProgress(emp.id, stemStart);
+          } else {
+            await dbReanchorSchedule(emp.id, stemStart);
+          }
+        }
         showToast("Employee updated"); overlay.remove(); renderSupervisorView();
       } else { saveBtn.disabled=false; saveBtn.textContent="Save changes"; }
     } else {
-      const assignModules = document.getElementById("fAssignModules").checked;
-      const created = await dbCreateEmployeeWithModules({name, email, username, password:pass, role:roleVal, startDate:start, employeeCode:empCode, projectId:projectId, assignModules});
+      // Only assign STEM modules when category is STEM OPT EAD and box checked; anchor to STEM start date
+      const assignModules = isStem && document.getElementById("fAssignModules") && document.getElementById("fAssignModules").checked;
+      const created = await dbCreateEmployeeWithModules({name, email, username, password:pass, role:roleVal, startDate:start, employeeCode:empCode, projectId:projectId, visaCategory: visa||null, stemStartDate: stemStart||null, assignModules, scheduleAnchor: stemStart});
       if(created){ await applyAutoFutureCompliance(created.id); showToast("Employee created"); overlay.remove(); renderSupervisorView(); }
       else { saveBtn.disabled=false; saveBtn.textContent="Create employee"; }
     }
